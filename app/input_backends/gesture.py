@@ -1,0 +1,174 @@
+"""Camera-driven gesture input with prediction debouncing.
+
+Turns raw per-frame model predictions into clean gesture events:
+a prediction only becomes a confirmed gesture after several consecutive
+frames agree on the same class with sufficient confidence.
+"""
+
+from pathlib import Path
+from time import monotonic
+from typing import Final, NamedTuple
+
+import cv2
+from cv2.typing import MatLike
+
+from app.input_backends.actions import GameAction
+from utils.predictor import GesturePredictor
+
+DEFAULT_CAMERA_INDEX: Final[int] = 0
+DEFAULT_CONFIDENCE_THRESHOLD: Final[float] = 0.8
+DEFAULT_STABLE_PREDICTION_COUNT: Final[int] = 3
+DEFAULT_PREDICTION_INTERVAL_FRAMES: Final[int] = 2
+DEFAULT_REPEAT_INTERVAL_SECONDS: Final[float] = 0.25
+
+
+class GestureEvent(NamedTuple):
+    class_name: str
+    confidence: float
+
+
+class GestureInputSource:
+    """Reads camera frames and emits debounced gesture events.
+
+    Trigger gestures (held without repetition support) fire exactly once
+    per gesture hold; repeatable gestures fire again every
+    ``repeat_interval_seconds`` while the gesture stays recognized.
+    """
+
+    def __init__(
+        self,
+        model_path: Path | str,
+        repeatable_class_names: frozenset[str] = frozenset(),
+        camera_index: int = DEFAULT_CAMERA_INDEX,
+        confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+        stable_prediction_count: int = DEFAULT_STABLE_PREDICTION_COUNT,
+        prediction_interval_frames: int = DEFAULT_PREDICTION_INTERVAL_FRAMES,
+        repeat_interval_seconds: float = DEFAULT_REPEAT_INTERVAL_SECONDS,
+    ) -> None:
+        model_file_path = Path(model_path)
+        if not model_file_path.is_file():
+            raise FileNotFoundError(
+                "Gesture model not found: {}; train it first with "
+                "'python -m utils.trainer'.".format(model_file_path)
+            )
+        if stable_prediction_count < 1:
+            raise ValueError(
+                "stable_prediction_count must be a positive integer, got {}.".format(
+                    stable_prediction_count
+                )
+            )
+        if prediction_interval_frames < 1:
+            raise ValueError(
+                "prediction_interval_frames must be a positive integer, got {}.".format(
+                    prediction_interval_frames
+                )
+            )
+        self._repeatable_class_names = repeatable_class_names
+        self._confidence_threshold = confidence_threshold
+        self._stable_prediction_count = stable_prediction_count
+        self._prediction_interval_frames = prediction_interval_frames
+        self._repeat_interval_seconds = repeat_interval_seconds
+        self._predictor = GesturePredictor(model_file_path)
+        self._capture: cv2.VideoCapture = cv2.VideoCapture(camera_index)
+        if not self._capture.isOpened():
+            raise RuntimeError(
+                "Cannot open camera with index {}.".format(camera_index)
+            )
+        self._frame_counter: int = 0
+        self._pending_class_name: str | None = None
+        self._pending_count: int = 0
+        self._confirmed_class_name: str | None = None
+        self._emitted_class_name: str | None = None
+        self._latest_confidence: float = 0.0
+        self._last_emit_monotonic_time: float = 0.0
+
+    def poll(self) -> GestureEvent | None:
+        """Advance the input pipeline by one frame and return an event or None."""
+        self._update_confirmation()
+        return self._collect_event(monotonic())
+
+    def close(self) -> None:
+        """Release the camera resource."""
+        self._capture.release()
+
+    def _update_confirmation(self) -> None:
+        self._frame_counter += 1
+        if self._frame_counter % self._prediction_interval_frames != 0:
+            return
+        frame = self._read_frame()
+        if frame is None:
+            return
+        prediction = self._predictor.predict(frame)
+        self._latest_confidence = prediction.confidence
+        if prediction.confidence < self._confidence_threshold:
+            self._reset_pending()
+            return
+        if prediction.class_name == self._pending_class_name:
+            self._pending_count += 1
+        else:
+            self._pending_class_name = prediction.class_name
+            self._pending_count = 1
+        if self._pending_count >= self._stable_prediction_count:
+            self._confirmed_class_name = self._pending_class_name
+
+    def _collect_event(self, current_monotonic_time: float) -> GestureEvent | None:
+        confirmed_class_name = self._confirmed_class_name
+        if confirmed_class_name is None:
+            return None
+        if confirmed_class_name != self._emitted_class_name:
+            self._emitted_class_name = confirmed_class_name
+            self._last_emit_monotonic_time = current_monotonic_time
+            return GestureEvent(
+                class_name=confirmed_class_name,
+                confidence=self._latest_confidence,
+            )
+        if confirmed_class_name in self._repeatable_class_names:
+            elapsed_seconds = (
+                current_monotonic_time - self._last_emit_monotonic_time
+            )
+            if elapsed_seconds >= self._repeat_interval_seconds:
+                self._last_emit_monotonic_time = current_monotonic_time
+                return GestureEvent(
+                    class_name=confirmed_class_name,
+                    confidence=self._latest_confidence,
+                )
+        return None
+
+    def _reset_pending(self) -> None:
+        self._pending_class_name = None
+        self._pending_count = 0
+        self._confirmed_class_name = None
+
+    def _read_frame(self) -> MatLike | None:
+        capture_success, frame = self._capture.read()
+        if not capture_success:
+            return None
+        return frame
+
+
+class GestureInputBackend:
+    """Gesture backend that maps debounced gesture events to game actions."""
+
+    def __init__(
+        self,
+        model_path: Path | str,
+        gesture_actions: dict[str, GameAction],
+        repeatable_class_names: frozenset[str] = frozenset(),
+    ) -> None:
+        self._source: GestureInputSource = GestureInputSource(
+            model_path,
+            repeatable_class_names=repeatable_class_names,
+        )
+        self._gesture_actions: dict[str, GameAction] = gesture_actions
+
+    def poll(self) -> list[GameAction]:
+        gesture_event = self._source.poll()
+        if gesture_event is None:
+            return []
+        gesture_action = self._gesture_actions.get(gesture_event.class_name)
+        if gesture_action is None:
+            return []
+        return [gesture_action]
+
+    def close(self) -> None:
+        self._source.close()

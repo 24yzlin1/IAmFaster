@@ -1,3 +1,4 @@
+import argparse
 import json
 from pathlib import Path
 from typing import Sequence, TypedDict
@@ -5,7 +6,7 @@ import cv2
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
-from common import (
+from utils.common import (
     EXTENSIONS,
     IMG_SIZE,
     Channels,
@@ -287,13 +288,40 @@ class ModelTrainer:
         return model_path
 
 
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Train the gesture recognition model."
+    )
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=Path("./dataset"),
+        help="Dataset root containing one subdirectory per gesture class.",
+    )
+    parser.add_argument(
+        "--model-path",
+        type=Path,
+        default=Path("./gesture_model.pth"),
+        help="Output path for the trained model.",
+    )
+    parser.add_argument(
+        "--epoch-count",
+        type=int,
+        default=20,
+        help="Number of training epochs.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    arguments = parse_arguments()
     torch.manual_seed(42)  # type: ignore
-    root = Path("./dataset")
-    model_path = Path("./gesture_model.pth")
+    dataset_root = arguments.dataset
+    model_path: Path = arguments.model_path
+    epoch_count: int = arguments.epoch_count
     channels: Channels = 1
     device = get_device()
-    dataset = GestureDataset(root, channels=channels)
+    dataset = GestureDataset(dataset_root, channels=channels)
     print("Classes ({}): {}".format(len(dataset.classes), dataset.classes))
     print(
         "Samples: {} | channels: {} | device: {}".format(
@@ -305,7 +333,7 @@ def main() -> None:
         model=model,
         dataset=dataset,
         device=device,
-        epoch=20,
+        epoch=epoch_count,
         classes=dataset.classes,
         in_channels=channels,
         batch_size=32,

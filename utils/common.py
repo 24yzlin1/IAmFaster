@@ -6,7 +6,7 @@ import torch
 from cv2.typing import MatLike
 from PIL import Image
 from torchvision.transforms import transforms
-from segment import segment
+from utils.segment import segment
 
 IMG_SIZE = 128
 EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".webp"})

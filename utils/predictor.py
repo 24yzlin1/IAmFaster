@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 import torch
 from cv2.typing import MatLike
-from common import IMG_SIZE, get_device, preprocess
+from utils.common import IMG_SIZE, get_device, preprocess
 
 
 class GesturePrediction(NamedTuple):

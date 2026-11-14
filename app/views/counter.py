@@ -9,7 +9,7 @@ ANTIALIAS_ENABLED: Final[bool] = True
 BACKGROUND_COLOR: Final[pygame.Color] = pygame.Color(0x0F, 0x14, 0x17)
 COUNT_COLOR: Final[pygame.Color] = pygame.Color(0xDF, 0xE3, 0xE7)
 HINT_COLOR: Final[pygame.Color] = pygame.Color(0xC0, 0xC8, 0xCD)
-HINT_TEXT: Final[str] = "Click +1   R reset   ESC quit"
+HINT_TEXT: Final[str] = "Palm +1   Fist reset   R reset   ESC quit"
 
 
 class CounterView(Protocol):
