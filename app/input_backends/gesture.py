@@ -9,13 +9,12 @@ from pathlib import Path
 from time import monotonic
 from typing import Final, NamedTuple
 
-import cv2
 from cv2.typing import MatLike
 
 from app.input_backends.actions import GameAction
+from app.input_backends.camera import CameraFrameReader, create_camera_frame_reader
 from utils.predictor import GesturePredictor
 
-DEFAULT_CAMERA_INDEX: Final[int] = 0
 DEFAULT_CONFIDENCE_THRESHOLD: Final[float] = 0.8
 DEFAULT_STABLE_PREDICTION_COUNT: Final[int] = 3
 DEFAULT_PREDICTION_INTERVAL_FRAMES: Final[int] = 2
@@ -39,7 +38,7 @@ class GestureInputSource:
         self,
         model_path: Path | str,
         repeatable_class_names: frozenset[str] = frozenset(),
-        camera_index: int = DEFAULT_CAMERA_INDEX,
+        camera_name: str | None = None,
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
         stable_prediction_count: int = DEFAULT_STABLE_PREDICTION_COUNT,
         prediction_interval_frames: int = DEFAULT_PREDICTION_INTERVAL_FRAMES,
@@ -69,11 +68,7 @@ class GestureInputSource:
         self._prediction_interval_frames = prediction_interval_frames
         self._repeat_interval_seconds = repeat_interval_seconds
         self._predictor = GesturePredictor(model_file_path)
-        self._capture: cv2.VideoCapture = cv2.VideoCapture(camera_index)
-        if not self._capture.isOpened():
-            raise RuntimeError(
-                "Cannot open camera with index {}.".format(camera_index)
-            )
+        self._camera_reader: CameraFrameReader = create_camera_frame_reader(camera_name)
         self._frame_counter: int = 0
         self._pending_class_name: str | None = None
         self._pending_count: int = 0
@@ -89,7 +84,7 @@ class GestureInputSource:
 
     def close(self) -> None:
         """Release the camera resource."""
-        self._capture.release()
+        self._camera_reader.release()
 
     def _update_confirmation(self) -> None:
         self._frame_counter += 1
@@ -140,10 +135,7 @@ class GestureInputSource:
         self._confirmed_class_name = None
 
     def _read_frame(self) -> MatLike | None:
-        capture_success, frame = self._capture.read()
-        if not capture_success:
-            return None
-        return frame
+        return self._camera_reader.read_frame()
 
 
 class GestureInputBackend:
@@ -154,10 +146,12 @@ class GestureInputBackend:
         model_path: Path | str,
         gesture_actions: dict[str, GameAction],
         repeatable_class_names: frozenset[str] = frozenset(),
+        camera_name: str | None = None,
     ) -> None:
         self._source: GestureInputSource = GestureInputSource(
             model_path,
             repeatable_class_names=repeatable_class_names,
+            camera_name=camera_name,
         )
         self._gesture_actions: dict[str, GameAction] = gesture_actions
 

@@ -21,6 +21,13 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_BACKEND_NAME,
         help="Input backend selection.",
     )
+    argument_parser.add_argument(
+        "--camera-name",
+        type=str,
+        default=None,
+        help="Camera device name for the gesture backend; "
+        "defaults to the first available device.",
+    )
     return argument_parser.parse_args()
 
 
@@ -28,7 +35,8 @@ def main() -> None:
     arguments = parse_arguments()
     model_path: Path = arguments.model_path
     backend_name: str = arguments.backend
-    run(model_path, backend_name)
+    camera_name: str | None = arguments.camera_name
+    run(model_path, backend_name, camera_name)
 
 
 if __name__ == "__main__":

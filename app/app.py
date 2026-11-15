@@ -22,7 +22,7 @@ WINDOW_SIZE: Final[tuple[int, int]] = (WINDOW_WIDTH, WINDOW_HEIGHT)
 WINDOW_TITLE: Final[str] = "Counter"
 FRAMES_PER_SECOND: Final[int] = 60
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_PATH: Final[Path] = PROJECT_ROOT / "gesture_model.pth"
+DEFAULT_MODEL_PATH: Final[Path] = PROJECT_ROOT / "gesture_model" / "gesture_model.pth"
 INCREMENT_GESTURE_NAME: Final[str] = "Palm"
 RESET_GESTURE_NAME: Final[str] = "Fist"
 REPEATABLE_GESTURE_CLASS_NAMES: Final[frozenset[str]] = frozenset(
@@ -35,13 +35,15 @@ GESTURE_ACTIONS: Final[dict[str, GameAction]] = {
 
 
 class CounterApplication:
-    def __init__(self, model_path: Path, backend_name: str) -> None:
+    def __init__(
+        self, model_path: Path, backend_name: str, camera_name: str | None
+    ) -> None:
         pygame.init()
         self._display_surface: pygame.Surface = pygame.display.set_mode(WINDOW_SIZE)
         pygame.display.set_caption(WINDOW_TITLE)
         self._frame_clock: pygame.time.Clock = pygame.time.Clock()
         self._input_backends: list[InputBackend] = self._build_input_backends(
-            model_path, backend_name
+            model_path, backend_name, camera_name
         )
         self._model: CounterModel = CounterModel()
         self._view: CounterView = PygameCounterView()
@@ -59,7 +61,7 @@ class CounterApplication:
             pygame.quit()
 
     def _build_input_backends(
-        self, model_path: Path, backend_name: str
+        self, model_path: Path, backend_name: str, camera_name: str | None
     ) -> list[InputBackend]:
         if backend_name not in (
             BACKEND_NAMES_ENABLING_KEYBOARD | BACKEND_NAMES_ENABLING_GESTURE
@@ -78,6 +80,7 @@ class CounterApplication:
                     model_path,
                     GESTURE_ACTIONS,
                     repeatable_class_names=REPEATABLE_GESTURE_CLASS_NAMES,
+                    camera_name=camera_name,
                 )
             )
         return input_backends
@@ -92,5 +95,5 @@ class CounterApplication:
             input_backend.close()
 
 
-def run(model_path: Path, backend_name: str) -> None:
-    CounterApplication(model_path, backend_name).run()
+def run(model_path: Path, backend_name: str, camera_name: str | None) -> None:
+    CounterApplication(model_path, backend_name, camera_name).run()
