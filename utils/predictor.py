@@ -1,12 +1,18 @@
+"""Load a trained gesture recognition model and run inference."""
+
 import json
 from pathlib import Path
 from typing import Any, NamedTuple
+
 import torch
 from cv2.typing import MatLike
+
 from utils.common import IMG_SIZE, get_device, preprocess
 
 
 class GesturePrediction(NamedTuple):
+    """Result of a single gesture prediction."""
+
     class_name: str
     class_index: int
     confidence: float
@@ -14,14 +20,21 @@ class GesturePrediction(NamedTuple):
 
 
 class GesturePredictor:
+    """Load a trained model from disk and classify gesture images."""
+
     def __init__(
         self,
         model_path: Path | str,
         device: torch.device | None = None,
     ) -> None:
-        self.model_path = Path(model_path)
-        self.device = device if device is not None else get_device()
-        self.classes = self._load_classes()
+        self.model_path: Path = Path(model_path)
+        self.device: torch.device = device if device is not None else get_device()
+        # Single-threaded inference is faster for this small network and
+        # avoids oversubscribing CPU cores shared with the camera pipeline.
+        torch.set_num_threads(1)
+        self.classes: list[str] = self._load_classes()
+        self.in_channels: int
+        self.img_size: int
         self.in_channels, self.img_size = self._load_metadata()
         loaded_model: Any = torch.load(
             self.model_path, map_location=self.device, weights_only=False
@@ -34,14 +47,15 @@ class GesturePredictor:
             )
         self.model: torch.nn.Module = loaded_model.to(self.device)
         self.model.eval()
-        warmup_input = torch.randn(
+        warmup_input: torch.Tensor = torch.randn(
             1, self.in_channels, self.img_size, self.img_size
         ).to(self.device)
         with torch.inference_mode():
             self.model(warmup_input)
 
     def _load_classes(self) -> list[str]:
-        classes_path = self.model_path.with_suffix(".classes.json")
+        """Read the class table saved next to the model file."""
+        classes_path: Path = self.model_path.with_suffix(".classes.json")
         if not classes_path.is_file():
             raise FileNotFoundError("Class table not found: {}".format(classes_path))
         parsed_classes: Any = json.loads(classes_path.read_text(encoding="utf-8"))
@@ -52,7 +66,8 @@ class GesturePredictor:
         return [str(class_name) for class_name in parsed_classes]  # type: ignore
 
     def _load_metadata(self) -> tuple[int, int]:
-        metadata_path = self.model_path.with_suffix(".meta.json")
+        """Read the preprocessing metadata saved next to the model file."""
+        metadata_path: Path = self.model_path.with_suffix(".meta.json")
         if not metadata_path.is_file():
             raise FileNotFoundError(
                 "Model metadata not found: {}".format(metadata_path)
@@ -62,8 +77,8 @@ class GesturePredictor:
             raise ValueError(
                 "Model metadata must be a JSON object: {}".format(metadata_path)
             )
-        in_channels = int(parsed_metadata.get("in_channels", 1))  # type: ignore
-        image_size = int(parsed_metadata.get("img_size", IMG_SIZE))  # type: ignore
+        in_channels: int = int(parsed_metadata.get("in_channels", 1))  # type: ignore
+        image_size: int = int(parsed_metadata.get("img_size", IMG_SIZE))  # type: ignore
         if in_channels not in (1, 3):
             raise ValueError(
                 "Unsupported in_channels={} in {}; expected 1 (mask) or 3 (RGB).".format(
@@ -80,19 +95,20 @@ class GesturePredictor:
 
     @torch.inference_mode()
     def predict(self, image: MatLike) -> GesturePrediction:
-        input_tensor = preprocess(image, self.in_channels)
-        batch_tensor = input_tensor.unsqueeze(0).to(self.device)
-        logits = self.model(batch_tensor)
-        probability_scores = torch.softmax(logits, dim=1)[0]
-        prediction_index = int(probability_scores.argmax(dim=0).item())
+        """Classify one image and return the predicted class and probabilities."""
+        input_tensor: torch.Tensor = preprocess(image, self.in_channels)
+        batch_tensor: torch.Tensor = input_tensor.unsqueeze(0).to(self.device)
+        logits: torch.Tensor = self.model(batch_tensor)
+        probability_scores: torch.Tensor = torch.softmax(logits, dim=1)[0]
+        prediction_index: int = int(probability_scores.argmax(dim=0).item())
         if not 0 <= prediction_index < len(self.classes):
             raise RuntimeError(
                 "Predicted class index {} is out of range for {} classes.".format(
                     prediction_index, len(self.classes)
                 )
             )
-        confidence_value = float(probability_scores[prediction_index].item())
-        probability_mapping = {
+        confidence_value: float = float(probability_scores[prediction_index].item())
+        probability_mapping: dict[str, float] = {
             class_name: float(probability_scores[class_index].item())
             for class_index, class_name in enumerate(self.classes)
         }

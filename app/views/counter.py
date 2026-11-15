@@ -1,5 +1,7 @@
 from typing import Final, Protocol
+
 import pygame
+
 from app.models.counter import CounterModel
 
 COUNT_FONT_SIZE: Final[int] = 72
@@ -16,6 +18,8 @@ class CounterView(Protocol):
     def render_frame(
         self, display_surface: pygame.Surface, model: CounterModel
     ) -> None: ...
+
+
 class PygameCounterView:
     def __init__(self) -> None:
         self._count_font: pygame.font.Font = pygame.font.Font(None, COUNT_FONT_SIZE)

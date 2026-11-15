@@ -1,11 +1,20 @@
+"""Train the gesture recognition model on a directory of images.
+
+The dataset root must contain one subdirectory per gesture class, and
+the images of each class must be stored directly inside that directory.
+"""
+
 import argparse
 import json
 from pathlib import Path
-from typing import Sequence, TypedDict
+from typing import Any, Final, Sequence, TypedDict
+
 import cv2
 import torch
+from cv2.typing import MatLike
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
+
 from utils.common import (
     EXTENSIONS,
     IMG_SIZE,
@@ -17,10 +26,12 @@ from utils.common import (
     preprocess,
 )
 
-PROGRESS_BAR_WIDTH = 50
+PROGRESS_BAR_WIDTH: Final[int] = 50
 
 
 class EpochRecord(TypedDict):
+    """Metrics recorded for a single training epoch."""
+
     epoch: int
     train_loss: float
     train_accuracy: float
@@ -29,6 +40,8 @@ class EpochRecord(TypedDict):
 
 
 class GestureDataset(Dataset[SampleType]):
+    """Image dataset that maps subdirectories under *root* to class labels."""
+
     def __init__(
         self,
         root: Path | str,
@@ -36,7 +49,7 @@ class GestureDataset(Dataset[SampleType]):
         transform: Transform = default_transform,
     ) -> None:
         super().__init__()
-        self.root = Path(root)
+        self.root: Path = Path(root)
         self.channels: Channels = channels
         self.transform: Transform = transform
         self.classes: list[str] = []
@@ -60,21 +73,22 @@ class GestureDataset(Dataset[SampleType]):
             class_name: label for label, class_name in enumerate(self.classes)
         }
         for class_name, label in self.class_to_index.items():
-            class_directory = self.root / class_name
+            class_directory: Path = self.root / class_name
             for file_path in class_directory.iterdir():
                 if file_path.is_file() and file_path.suffix.lower() in EXTENSIONS:
                     self.samples.append((file_path, label))
 
     @property
     def in_channels(self) -> int:
+        """Return the number of channels of the produced tensors."""
         return self.channels
 
     def __getitem__(self, index: int) -> SampleType:
         image_path, label = self.samples[index]
-        bgr_image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        bgr_image: MatLike | None = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
         if bgr_image is None:
             raise RuntimeError("Cannot read image: {}".format(image_path))
-        tensor = preprocess(bgr_image, self.channels, self.transform)
+        tensor: torch.Tensor = preprocess(bgr_image, self.channels, self.transform)
         return (tensor, torch.tensor(label, dtype=torch.long))
 
     def __len__(self) -> int:
@@ -82,7 +96,11 @@ class GestureDataset(Dataset[SampleType]):
 
 
 def build_model(num_classes: int, in_channels: int = 1) -> torch.nn.Module:
-    """128 -> pool 64 -> pool 32; Flatten yields 32 * 32 * 32 features."""
+    """Build the convolutional network used for gesture classification.
+
+    Feature maps go 128 -> pool -> 64 -> pool -> 32, so the flattened
+    feature vector has 32 * 32 * 32 elements.
+    """
     return torch.nn.Sequential(
         torch.nn.Conv2d(in_channels, 16, kernel_size=3, padding=1),
         torch.nn.ReLU(),
@@ -98,6 +116,8 @@ def build_model(num_classes: int, in_channels: int = 1) -> torch.nn.Module:
 
 
 class ModelTrainer:
+    """Train a model on a dataset and record per-epoch metrics."""
+
     def __init__(
         self,
         model: torch.nn.Module,
@@ -113,38 +133,38 @@ class ModelTrainer:
         validate_split: float = 0.2,
         seed: int = 42,
     ) -> None:
-        self.device = device
-        self.model = model.to(device)
-        self.dataset = dataset
-        self.epoch = epoch
+        self.device: torch.device = device
+        self.model: torch.nn.Module = model.to(device)
+        self.dataset: Dataset[SampleType] = dataset
+        self.epoch: int = epoch
         self.classes: list[str] = list(classes) if classes is not None else []
-        self.in_channels = in_channels
+        self.in_channels: int = in_channels
         self.history: list[EpochRecord] = []
         self.best_validation_accuracy: float = 0.0
-        total_samples = len(dataset)  # type: ignore
+        total_samples: int = len(dataset)  # type: ignore
         if not 0 <= validate_split < 1:
             raise ValueError("validate_split must be in [0, 1).")
-        validation_samples = int(total_samples * validate_split)
-        training_samples = total_samples - validation_samples
+        validation_samples: int = int(total_samples * validate_split)
+        training_samples: int = total_samples - validation_samples
         if training_samples == 0 or validation_samples == 0:
             raise ValueError(
                 "Too few samples ({}) to split by {:.0%} into train/validation sets.".format(
                     total_samples, validate_split
                 )
             )
-        generator = torch.Generator().manual_seed(seed)
+        generator: torch.Generator = torch.Generator().manual_seed(seed)
         train_dataset, validation_dataset = random_split(
             dataset, [training_samples, validation_samples], generator=generator
         )
-        pin_memory = device.type == "cuda"
-        self.train_loader = DataLoader(
+        pin_memory: bool = device.type == "cuda"
+        self.train_loader: DataLoader[SampleType] = DataLoader(
             train_dataset,
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        self.validate_loader = DataLoader(
+        self.validate_loader: DataLoader[SampleType] = DataLoader(
             validation_dataset,
             batch_size=batch_size,
             shuffle=False,
@@ -162,12 +182,15 @@ class ModelTrainer:
         save_name_prefix: str = "model",
         save_frequency: int = 5,
     ) -> list[EpochRecord]:
+        """Run the training loop and return the per-epoch history."""
         if save_frequency <= 0:
             raise ValueError("save_frequency must be a positive integer.")
-        snapshot_directory = Path(save_dir) if save_dir is not None else None
+        snapshot_directory: Path | None = (
+            Path(save_dir) if save_dir is not None else None
+        )
         if snapshot_directory is not None:
             snapshot_directory.mkdir(parents=True, exist_ok=True)
-        epoch_progress = tqdm(
+        epoch_progress: tqdm[Any] = tqdm(
             total=self.epoch,
             ncols=PROGRESS_BAR_WIDTH,
             leave=True,
@@ -188,7 +211,7 @@ class ModelTrainer:
             }
             self.history.append(epoch_record)
             if snapshot_directory is not None and epoch % save_frequency == 0:
-                snapshot_path = snapshot_directory / "{}_{:02d}.pth".format(
+                snapshot_path: Path = snapshot_directory / "{}_{:02d}.pth".format(
                     save_name_prefix, epoch
                 )
                 self.save(snapshot_path)
@@ -196,7 +219,7 @@ class ModelTrainer:
             if validation_accuracy > self.best_validation_accuracy:
                 self.best_validation_accuracy = validation_accuracy
                 if snapshot_directory is not None:
-                    best_checkpoint_path = snapshot_directory / "{}_best.pth".format(
+                    best_checkpoint_path: Path = snapshot_directory / "{}_best.pth".format(
                         save_name_prefix
                     )
                     self.save(best_checkpoint_path)
@@ -209,23 +232,23 @@ class ModelTrainer:
 
     def _train_epoch(self, epoch: int) -> tuple[float, float]:
         self.model.train()
-        running_loss = 0.0
-        correct_predictions = 0
-        total_predictions = 0
-        batch_progress = tqdm(
+        running_loss: float = 0.0
+        correct_predictions: int = 0
+        total_predictions: int = 0
+        batch_progress: tqdm[Any] = tqdm(
             self.train_loader,
             ncols=PROGRESS_BAR_WIDTH,
             leave=False,
         )
         for images, labels in batch_progress:
-            images = images.to(self.device, non_blocking=True)
-            labels = labels.to(self.device, non_blocking=True)
+            images: torch.Tensor = images.to(self.device, non_blocking=True)
+            labels: torch.Tensor = labels.to(self.device, non_blocking=True)
             self.optimizer.zero_grad()
-            logits = self.model(images)
-            loss = self.criterion(logits, labels)
-            loss.backward()
+            logits: torch.Tensor = self.model(images)
+            loss: torch.Tensor = self.criterion(logits, labels)
+            loss.backward()  # type: ignore
             self.optimizer.step()
-            current_loss_value = loss.item()
+            current_loss_value: float = loss.item()
             running_loss += current_loss_value * labels.size(0)
             correct_predictions += int((logits.argmax(dim=1) == labels).sum().item())
             total_predictions += labels.size(0)
@@ -239,20 +262,20 @@ class ModelTrainer:
     @torch.no_grad()
     def _validate(self) -> tuple[float, float]:
         self.model.eval()
-        running_loss = 0.0
-        correct_predictions = 0
-        total_predictions = 0
-        batch_progress = tqdm(
+        running_loss: float = 0.0
+        correct_predictions: int = 0
+        total_predictions: int = 0
+        batch_progress: tqdm[Any] = tqdm(
             self.validate_loader,
             ncols=PROGRESS_BAR_WIDTH,
             leave=False,
         )
         for images, labels in batch_progress:
-            images = images.to(self.device, non_blocking=True)
-            labels = labels.to(self.device, non_blocking=True)
-            logits = self.model(images)
-            loss = self.criterion(logits, labels)
-            current_loss_value = loss.item()
+            images: torch.Tensor = images.to(self.device, non_blocking=True)
+            labels: torch.Tensor = labels.to(self.device, non_blocking=True)
+            logits: torch.Tensor = self.model(images)
+            loss: torch.Tensor = self.criterion(logits, labels)
+            current_loss_value: float = loss.item()
             running_loss += current_loss_value * labels.size(0)
             correct_predictions += int((logits.argmax(dim=1) == labels).sum().item())
             total_predictions += labels.size(0)
@@ -266,14 +289,14 @@ class ModelTrainer:
     def save(self, path: Path | str, as_state_dict: bool = False) -> Path:
         """Save a full torch.nn.Module (torch.load(..., weights_only=False) on the
         predictor side), plus the class table and the preprocessing metadata."""
-        model_path = Path(path)
+        model_path: Path = Path(path)
         model_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.model.state_dict() if as_state_dict else self.model, model_path)
-        classes_path = model_path.with_suffix(".classes.json")
+        classes_path: Path = model_path.with_suffix(".classes.json")
         classes_path.write_text(
             json.dumps(self.classes, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        metadata_path = model_path.with_suffix(".meta.json")
+        metadata_path: Path = model_path.with_suffix(".meta.json")
         metadata_path.write_text(
             json.dumps(
                 {"in_channels": self.in_channels, "img_size": IMG_SIZE},
@@ -289,7 +312,8 @@ class ModelTrainer:
 
 
 def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
+    """Parse command-line arguments for the training script."""
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
         description="Train the gesture recognition model."
     )
     parser.add_argument(
@@ -314,22 +338,25 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def main() -> None:
-    arguments = parse_arguments()
+    """Train the model with the configured command-line arguments."""
+    arguments: argparse.Namespace = parse_arguments()
     torch.manual_seed(42)  # type: ignore
-    dataset_root = arguments.dataset
+    dataset_root: Path = arguments.dataset
     model_path: Path = arguments.model_path
     epoch_count: int = arguments.epoch_count
     channels: Channels = 1
-    device = get_device()
-    dataset = GestureDataset(dataset_root, channels=channels)
+    device: torch.device = get_device()
+    dataset: GestureDataset = GestureDataset(dataset_root, channels=channels)
     print("Classes ({}): {}".format(len(dataset.classes), dataset.classes))
     print(
         "Samples: {} | channels: {} | device: {}".format(
             len(dataset), dataset.in_channels, device
         )
     )
-    model = build_model(num_classes=len(dataset.classes), in_channels=channels)
-    trainer = ModelTrainer(
+    model: torch.nn.Module = build_model(
+        num_classes=len(dataset.classes), in_channels=channels
+    )
+    trainer: ModelTrainer = ModelTrainer(
         model=model,
         dataset=dataset,
         device=device,

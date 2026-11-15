@@ -5,19 +5,20 @@ a prediction only becomes a confirmed gesture after several consecutive
 frames agree on the same class with sufficient confidence.
 """
 
+import threading
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from typing import Final, NamedTuple
 
 from cv2.typing import MatLike
 
 from app.input_backends.actions import GameAction
 from app.input_backends.camera import CameraFrameReader, create_camera_frame_reader
-from utils.predictor import GesturePredictor
+from utils.predictor import GesturePrediction, GesturePredictor
 
 DEFAULT_CONFIDENCE_THRESHOLD: Final[float] = 0.8
 DEFAULT_STABLE_PREDICTION_COUNT: Final[int] = 3
-DEFAULT_PREDICTION_INTERVAL_FRAMES: Final[int] = 2
+DEFAULT_WORKER_INTERVAL_SECONDS: Final[float] = 0.005
 DEFAULT_REPEAT_INTERVAL_SECONDS: Final[float] = 0.25
 
 
@@ -29,6 +30,8 @@ class GestureEvent(NamedTuple):
 class GestureInputSource:
     """Reads camera frames and emits debounced gesture events.
 
+    A background worker thread performs the camera grabs and model
+    predictions so the game loop only performs cheap event collection.
     Trigger gestures (held without repetition support) fire exactly once
     per gesture hold; repeatable gestures fire again every
     ``repeat_interval_seconds`` while the gesture stays recognized.
@@ -41,7 +44,6 @@ class GestureInputSource:
         camera_name: str | None = None,
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
         stable_prediction_count: int = DEFAULT_STABLE_PREDICTION_COUNT,
-        prediction_interval_frames: int = DEFAULT_PREDICTION_INTERVAL_FRAMES,
         repeat_interval_seconds: float = DEFAULT_REPEAT_INTERVAL_SECONDS,
     ) -> None:
         model_file_path = Path(model_path)
@@ -56,55 +58,57 @@ class GestureInputSource:
                     stable_prediction_count
                 )
             )
-        if prediction_interval_frames < 1:
-            raise ValueError(
-                "prediction_interval_frames must be a positive integer, got {}.".format(
-                    prediction_interval_frames
-                )
-            )
         self._repeatable_class_names = repeatable_class_names
         self._confidence_threshold = confidence_threshold
         self._stable_prediction_count = stable_prediction_count
-        self._prediction_interval_frames = prediction_interval_frames
         self._repeat_interval_seconds = repeat_interval_seconds
         self._predictor = GesturePredictor(model_file_path)
         self._camera_reader: CameraFrameReader = create_camera_frame_reader(camera_name)
-        self._frame_counter: int = 0
+        self._state_lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._worker_thread = threading.Thread(
+            target=self._run_worker, daemon=True, name="gesture-prediction-worker"
+        )
         self._pending_class_name: str | None = None
         self._pending_count: int = 0
         self._confirmed_class_name: str | None = None
         self._emitted_class_name: str | None = None
         self._latest_confidence: float = 0.0
         self._last_emit_monotonic_time: float = 0.0
+        self._worker_thread.start()
 
     def poll(self) -> GestureEvent | None:
-        """Advance the input pipeline by one frame and return an event or None."""
-        self._update_confirmation()
-        return self._collect_event(monotonic())
+        """Collect one gesture event without touching the camera or model."""
+        with self._state_lock:
+            return self._collect_event(monotonic())
 
     def close(self) -> None:
-        """Release the camera resource."""
+        """Stop the worker thread and release the camera resource."""
+        self._stop_event.set()
+        self._worker_thread.join(timeout=2.0)
         self._camera_reader.release()
 
-    def _update_confirmation(self) -> None:
-        self._frame_counter += 1
-        if self._frame_counter % self._prediction_interval_frames != 0:
-            return
-        frame = self._read_frame()
-        if frame is None:
-            return
-        prediction = self._predictor.predict(frame)
-        self._latest_confidence = prediction.confidence
-        if prediction.confidence < self._confidence_threshold:
-            self._reset_pending()
-            return
-        if prediction.class_name == self._pending_class_name:
-            self._pending_count += 1
-        else:
-            self._pending_class_name = prediction.class_name
-            self._pending_count = 1
-        if self._pending_count >= self._stable_prediction_count:
-            self._confirmed_class_name = self._pending_class_name
+    def _run_worker(self) -> None:
+        """Grab frames, predict, and update confirmation until stopped."""
+        while not self._stop_event.is_set():
+            frame = self._read_frame()
+            if frame is not None:
+                self._update_confirmation(self._predictor.predict(frame))
+            sleep(DEFAULT_WORKER_INTERVAL_SECONDS)
+
+    def _update_confirmation(self, prediction: GesturePrediction) -> None:
+        with self._state_lock:
+            self._latest_confidence = prediction.confidence
+            if prediction.confidence < self._confidence_threshold:
+                self._reset_pending()
+                return
+            if prediction.class_name == self._pending_class_name:
+                self._pending_count += 1
+            else:
+                self._pending_class_name = prediction.class_name
+                self._pending_count = 1
+            if self._pending_count >= self._stable_prediction_count:
+                self._confirmed_class_name = self._pending_class_name
 
     def _collect_event(self, current_monotonic_time: float) -> GestureEvent | None:
         confirmed_class_name = self._confirmed_class_name

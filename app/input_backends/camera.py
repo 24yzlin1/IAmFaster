@@ -7,9 +7,7 @@ instead, matching the working data collection tool startup sequence.
 
 from __future__ import annotations
 
-import ctypes
 import sys
-import threading
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import numpy
@@ -22,8 +20,6 @@ if TYPE_CHECKING:
 
 DEFAULT_CAMERA_INDEX: Final[int] = 0
 FRAME_DTYPE: Final = numpy.uint8
-NATIVE_PREVIEW_HIDE_DELAY_SECONDS: Final[float] = 1.0
-NATIVE_PREVIEW_WINDOW_TITLE: Final[str] = "ActiveMovie Window"
 
 
 class CameraFrameReader(Protocol):
@@ -64,11 +60,6 @@ class DirectShowCameraFrameReader:
     def __init__(self, camera_name: str | None) -> None:
         self._graph: Any = self._build_running_graph(camera_name)
         self._latest_frame: Mat | None = None
-        hide_preview_timer = threading.Timer(
-            NATIVE_PREVIEW_HIDE_DELAY_SECONDS, self._hide_native_preview_window
-        )
-        hide_preview_timer.daemon = True
-        hide_preview_timer.start()
 
     def read_frame(self) -> MatLike | None:
         self._graph.grab_frame()
@@ -103,25 +94,32 @@ class DirectShowCameraFrameReader:
                 )
         filter_graph.add_video_input_device(device_index)
         filter_graph.add_sample_grabber(self._on_sample_grabbed)
-        filter_graph.add_default_render()
+        filter_graph.add_video_mixing_render()
         filter_graph.prepare_preview_graph()
         filter_graph.run()
+        self._hide_preview_window(filter_graph)
         return filter_graph
 
     def _on_sample_grabbed(self, image: Mat) -> None:
         self._latest_frame = image
 
     @staticmethod
-    def _hide_native_preview_window() -> None:
+    def _hide_preview_window(filter_graph: Any) -> None:
+        """Hide the renderer preview window through its IVideoWindow interface.
+
+        The Video Mixing Renderer still opens a windowed preview; hiding it
+        via COM avoids the unreliable window-title lookup and removes the
+        renderer window from the foreground switching equation entirely.
+        """
         try:
-            user32_library: Any = ctypes.windll.user32
-            window_handle: int = int(
-                user32_library.FindWindowW(None, NATIVE_PREVIEW_WINDOW_TITLE)
-            )
-            if window_handle:
-                user32_library.ShowWindow(window_handle, 0)
-        except OSError:
-            print("Failed to hide the native preview window.")
+            from pygrabber.dshow_graph import FilterType
+
+            render_filter: Any = filter_graph.filters[FilterType.render]
+            video_window: Any = render_filter.video_window
+            if video_window is not None:
+                video_window.put_Visible(False)
+        except Exception as error:
+            print("Failed to hide the video preview window: {}".format(error))
 
 
 def create_camera_frame_reader(camera_name: str | None) -> CameraFrameReader:

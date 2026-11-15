@@ -52,6 +52,9 @@ class CounterApplication:
     def run(self) -> None:
         try:
             while self._model.is_running:
+                # SDL requires periodic event pumping even when no backend
+                # consumes window events; without it Windows ghosts the window.
+                pygame.event.pump()
                 self._poll_input_backends()
                 self._view.render_frame(self._display_surface, self._model)
                 pygame.display.flip()
