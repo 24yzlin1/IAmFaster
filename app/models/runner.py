@@ -21,11 +21,19 @@ class Hazard(Enum):
     WALL = auto()
 
 
+OBSTACLE_STYLES: Final[dict[Hazard, tuple[str, ...]]] = {
+    Hazard.HURDLE: ("railing_straight_padded", "railing_straight_double", "barrier_2x1x1"),
+    Hazard.OVERHEAD_BAR: ("arch_wide", "arch", "arch_tall"),
+    Hazard.WALL: ("barrier_2x1x4", "platform_decorative_2x2x2", "barrier_2x1x2"),
+}
+
+
 @dataclass(frozen=True)
 class Obstacle:
     lane: int
     distance: float
     kind: Hazard
+    style_index: int = 0
 
 
 @dataclass
@@ -93,5 +101,7 @@ class RunnerModel:
         while self.next_row < self.distance + 90.0:
             lane: int
             for lane in self.random.sample((-1, 0, 1), self.random.randint(1, 2)):
-                self.obstacles.append(Obstacle(lane, self.next_row, self.random.choice(tuple(Hazard))))
+                kind: Hazard = self.random.choice(tuple(Hazard))
+                style_index: int = self.random.randrange(len(OBSTACLE_STYLES[kind]))
+                self.obstacles.append(Obstacle(lane, self.next_row, kind, style_index))
             self.next_row += 22.0

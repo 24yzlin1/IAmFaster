@@ -270,8 +270,8 @@ class Renderer:
     def _upload_texture(self, texture_data: TextureData) -> moderngl.Texture:
         """Upload decoded texture pixels into an OpenGL texture."""
         texture = self._context.texture(texture_data.size, 4, texture_data.pixel_bytes)
-        texture.filter = (moderngl.LINEAR, moderngl.LINEAR_MIPMAP_LINEAR)
         texture.build_mipmaps()
+        texture.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
         return texture
 
     def create_vertex_array(
@@ -298,16 +298,19 @@ class Renderer:
         self,
         resources: ModelRenderResources,
         view_projection: Matrix4,
-        skinning_matrices: npt.NDArray[np.float32],
+        skinning_matrices: npt.NDArray[np.float32] | None = None,
     ) -> None:
         """Draw every primitive of the model."""
         _write_matrix_uniform(
             get_uniform(self._mesh_program, "u_view_projection"), view_projection
         )
-        self._joint_uniform_input[: resources.joint_count] = skinning_matrices
-        get_uniform(self._mesh_program, "u_joint_matrices").write(
-            self._joint_uniform_input.transpose(0, 2, 1).astype("f4").tobytes()
-        )
+        if resources.joint_count:
+            if skinning_matrices is None:
+                raise ValueError("skinning matrices are required for a skinned model")
+            self._joint_uniform_input[: resources.joint_count] = skinning_matrices
+            get_uniform(self._mesh_program, "u_joint_matrices").write(
+                self._joint_uniform_input.transpose(0, 2, 1).astype("f4").tobytes()
+            )
         model_matrix_uniform = get_uniform(self._mesh_program, "u_model_matrix")
         skinned_uniform = get_uniform(self._mesh_program, "u_is_skinned")
         base_color_uniform = get_uniform(self._mesh_program, "u_base_color_factor")

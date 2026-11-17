@@ -7,20 +7,25 @@ import moderngl
 import numpy
 import pygame
 
-from app.models.runner import ACTION_DURATION, LANE_WIDTH, Hazard, Motion, Obstacle, RunnerModel
+from app.models.runner import ACTION_DURATION, LANE_WIDTH, OBSTACLE_STYLES, Hazard, Motion, Obstacle, RunnerModel
 from kaykit_previewer.animation import compute_skinning_matrices, evaluate_global_node_matrices
-from kaykit_previewer.gltf_loader import AnimationClipData, GltfModel, load_model
+from kaykit_previewer.gltf_loader import AnimationClipData, GltfModel, MeshData, MeshPrimitiveData, load_model
 from kaykit_previewer.renderer import ModelRenderResources, Renderer, get_uniform
-from kaykit_previewer.transform_math import Matrix4, build_look_at_matrix, build_perspective_matrix, identity_matrix
+from kaykit_previewer.transform_math import Matrix4, Vector3, build_look_at_matrix, build_perspective_matrix, identity_matrix
 
 ASSETS: Final[Path] = Path(__file__).resolve().parents[2] / "assets"
 WINDOW_SIZE: Final[tuple[int, int]] = (960, 640)
 CLIP_NAMES: Final[dict[Motion, str]] = {
     Motion.RUN: "Running_A", Motion.JUMP: "Jump_Full_Short", Motion.SLIDE: "Lie_Idle"
 }
-# Leave clearance above the grounded knight's helmet throughout the slide.
-BAR_CLEARANCE: Final[float] = 1.42
-BAR_THICKNESS: Final[float] = 0.45
+type Triple = tuple[float, float, float]
+
+# Dimensions are in track units. The arch must clear the sliding knight across its shoulders.
+OBSTACLE_APPEARANCE: Final[dict[Hazard, tuple[str, Triple]]] = {
+    Hazard.HURDLE: ("yellow", (1.85, 0.55, 0.60)),
+    Hazard.OVERHEAD_BAR: ("blue", (2.36, 2.30, 0.60)),
+    Hazard.WALL: ("red", (1.85, 2.90, 0.60)),
+}
 
 BOX_VERTEX: Final[str] = """
 #version 330
@@ -44,7 +49,6 @@ in float light;
 out vec4 pixel;
 void main() { pixel = vec4(color * light, 1); }
 """
-type Triple = tuple[float, float, float]
 
 
 class RunnerView:
@@ -55,6 +59,19 @@ class RunnerView:
             ASSETS / "KayKit_Adventurers_2.0_FREE/Characters/gltf/Knight.glb"
         )
         self.resources: ModelRenderResources = self.renderer.upload_model(self.character, identity_matrix())
+        self.obstacle_resources: dict[tuple[Hazard, int], ModelRenderResources] = {}
+        obstacle_directory: Path = ASSETS / "KayKit_Platformer_Pack_1.0_FREE/Assets/gltf"
+        kind: Hazard
+        color: str
+        dimensions: Triple
+        for kind, (color, dimensions) in OBSTACLE_APPEARANCE.items():
+            style_index: int
+            style: str
+            for style_index, style in enumerate(OBSTACLE_STYLES[kind]):
+                model_path: Path = obstacle_directory / color / f"{style}_{color}.gltf"
+                self.obstacle_resources[kind, style_index] = self._upload_obstacle(
+                    model_path, dimensions, widen_opening=style in {"arch", "arch_tall"}
+                )
         directory: Path = ASSETS / "KayKit_Character_Animations_1.1/Animations/gltf/Rig_Medium"
         self.clips: dict[str, AnimationClipData] = {}
         path: Path
@@ -68,6 +85,29 @@ class RunnerView:
         self.program: moderngl.Program = context.program(vertex_shader=BOX_VERTEX, fragment_shader=BOX_FRAGMENT)
         self.box: moderngl.VertexArray = self.renderer.create_vertex_array(self.program, [])
         get_uniform(self.program, "projection").write(self.projection.T.copy().tobytes())
+
+    def _upload_obstacle(self, path: Path, dimensions: Triple, *, widen_opening: bool) -> ModelRenderResources:
+        scenery: GltfModel = load_model(path)
+        minimum: Vector3 = scenery.bounds_minimum
+        maximum: Vector3 = scenery.bounds_maximum
+        scale: Vector3 = numpy.divide(dimensions, maximum - minimum, dtype=numpy.float32)
+        base_center: Vector3 = (minimum + maximum) * numpy.float32(0.5)
+        base_center[1] = minimum[1]
+        if widen_opening:
+            # Widen the passage while keeping both outer edges within the lane.
+            half_width: float = float(maximum[0] - minimum[0]) / 2
+            mesh: MeshData
+            primitive: MeshPrimitiveData
+            for mesh in scenery.meshes:
+                for primitive in mesh.primitives:
+                    horizontal: Vector3 = primitive.positions[:, 0] - base_center[0]
+                    fraction_squared: Vector3 = numpy.square(horizontal / half_width).astype(numpy.float32)
+                    primitive.positions[:, 0] += 0.24 * horizontal * (1 - fraction_squared)
+                    primitive.normals[:, 0] /= 1 + 0.24 * (1 - 3 * fraction_squared)
+        transform: Matrix4 = identity_matrix()
+        transform[:3, :3] = numpy.diag(scale)
+        transform[:3, 3] = -base_center * scale
+        return self.renderer.upload_model(scenery, transform)
 
     def _box(self, center: Triple, size: Triple, color: Triple) -> None:
         get_uniform(self.program, "center").value = center
@@ -84,22 +124,14 @@ class RunnerView:
             marker: int
             for marker in range(-1, 17):
                 self._box((boundary, 0.01, model.distance % 5 - marker * 5), (0.06, 0.02, 2), (0.85, 0.84, 0.65))
+        self.context.enable(moderngl.CULL_FACE)
         obstacle: Obstacle
         for obstacle in model.obstacles:
-            lateral: float = obstacle.lane * LANE_WIDTH
-            depth: float = model.distance - obstacle.distance
-            if obstacle.kind is Hazard.WALL:
-                self._box((lateral, 1.45, depth), (1.85, 2.9, 0.6), (0.58, 0.28, 0.24))
-            elif obstacle.kind is Hazard.HURDLE:
-                self._box((lateral, 0.275, depth), (1.85, 0.55, 0.6), (1.0, 0.62, 0.17))
-            else:
-                self._box((lateral, BAR_CLEARANCE + BAR_THICKNESS / 2, depth),
-                          (2.1, BAR_THICKNESS, 0.6), (0.25, 0.75, 0.86))
-                side: int
-                for side in (-1, 1):
-                    self._box((lateral + side, BAR_CLEARANCE / 2, depth),
-                              (0.08, BAR_CLEARANCE, 0.3), (0.34, 0.48, 0.5))
-        self.context.enable(moderngl.CULL_FACE)
+            location: Matrix4 = identity_matrix()
+            location[0, 3] = obstacle.lane * LANE_WIDTH
+            location[2, 3] = model.distance - obstacle.distance
+            resources: ModelRenderResources = self.obstacle_resources[obstacle.kind, obstacle.style_index]
+            self.renderer.render_model(resources, self.projection @ location)
         clip: AnimationClipData = self.clips[CLIP_NAMES[model.motion]]
         phase: float = model.motion_time % clip.duration
         if model.motion is not Motion.RUN:
