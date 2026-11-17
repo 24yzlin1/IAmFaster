@@ -8,8 +8,8 @@ TARGET_MEAN_INTENSITY = 128.0
 MINIMUM_BRIGHTNESS_GAIN = 0.1
 MAXIMUM_BRIGHTNESS_GAIN = 3.0
 MAXIMUM_PIXEL_VALUE = 255
-YCRCB_LOWER_BOUND = (0, 133, 77)
-YCRCB_UPPER_BOUND = (255, 173, 127)
+YCRCB_LOWER_BOUND: numpy.typing.NDArray[numpy.uint8] = numpy.array((0, 133, 77), dtype=numpy.uint8)
+YCRCB_UPPER_BOUND: numpy.typing.NDArray[numpy.uint8] = numpy.array((255, 173, 127), dtype=numpy.uint8)
 MORPHOLOGY_KERNEL_SIZE = (5, 5)
 MASK_FOREGROUND_VALUE = 255
 

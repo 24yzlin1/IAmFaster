@@ -16,6 +16,10 @@ BACKEND_NAMES_ENABLING_GESTURE: Final[frozenset[str]] = frozenset(
 class GameAction(Enum):
     """Device-independent game actions dispatched to the presenter."""
 
+    LEFT = auto()
+    RIGHT = auto()
+    JUMP = auto()
+    SLIDE = auto()
     INCREMENT = auto()
     RESET = auto()
     QUIT = auto()

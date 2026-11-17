@@ -45,8 +45,9 @@ class GestureInputSource:
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
         stable_prediction_count: int = DEFAULT_STABLE_PREDICTION_COUNT,
         repeat_interval_seconds: float = DEFAULT_REPEAT_INTERVAL_SECONDS,
+        required_class_names: frozenset[str] = frozenset(),
     ) -> None:
-        model_file_path = Path(model_path)
+        model_file_path: Path = Path(model_path)
         if not model_file_path.is_file():
             raise FileNotFoundError(
                 "Gesture model not found: {}; train it first with "
@@ -63,6 +64,10 @@ class GestureInputSource:
         self._stable_prediction_count = stable_prediction_count
         self._repeat_interval_seconds = repeat_interval_seconds
         self._predictor = GesturePredictor(model_file_path)
+        missing: list[str] = sorted(required_class_names.difference(self._predictor.classes))
+        if missing:
+            raise ValueError(f"gesture model is missing required classes: {', '.join(missing)}")
+        self._release_count: int = 0
         self._camera_reader: CameraFrameReader = create_camera_frame_reader(camera_name)
         self._state_lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -75,7 +80,11 @@ class GestureInputSource:
         self._emitted_class_name: str | None = None
         self._latest_confidence: float = 0.0
         self._last_emit_monotonic_time: float = 0.0
-        self._worker_thread.start()
+        try:
+            self._worker_thread.start()
+        except RuntimeError:
+            self._camera_reader.release()
+            raise
 
     def poll(self) -> GestureEvent | None:
         """Collect one gesture event without touching the camera or model."""
@@ -100,8 +109,12 @@ class GestureInputSource:
         with self._state_lock:
             self._latest_confidence = prediction.confidence
             if prediction.confidence < self._confidence_threshold:
-                self._reset_pending()
+                self._release_count += 1
+                self._pending_count = 0
+                if self._release_count >= self._stable_prediction_count:
+                    self._reset_pending()
                 return
+            self._release_count = 0
             if prediction.class_name == self._pending_class_name:
                 self._pending_count += 1
             else:
@@ -137,6 +150,7 @@ class GestureInputSource:
         self._pending_class_name = None
         self._pending_count = 0
         self._confirmed_class_name = None
+        self._emitted_class_name = None
 
     def _read_frame(self) -> MatLike | None:
         return self._camera_reader.read_frame()
@@ -151,11 +165,13 @@ class GestureInputBackend:
         gesture_actions: dict[str, GameAction],
         repeatable_class_names: frozenset[str] = frozenset(),
         camera_name: str | None = None,
+        required_class_names: frozenset[str] = frozenset(),
     ) -> None:
         self._source: GestureInputSource = GestureInputSource(
             model_path,
             repeatable_class_names=repeatable_class_names,
             camera_name=camera_name,
+            required_class_names=required_class_names,
         )
         self._gesture_actions: dict[str, GameAction] = gesture_actions
 

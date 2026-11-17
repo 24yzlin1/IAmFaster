@@ -7,7 +7,7 @@ from app.input_backends import BACKEND_CHOICES, DEFAULT_BACKEND_NAME
 
 def parse_arguments() -> argparse.Namespace:
     argument_parser = argparse.ArgumentParser(
-        description="Run the gesture-controlled counter game."
+        description="Run the three-lane runner with keyboard or gesture controls."
     )
     argument_parser.add_argument(
         "--model-path",
@@ -32,7 +32,7 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def main() -> None:
-    arguments = parse_arguments()
+    arguments: argparse.Namespace = parse_arguments()
     model_path: Path = arguments.model_path
     backend_name: str = arguments.backend
     camera_name: str | None = arguments.camera_name

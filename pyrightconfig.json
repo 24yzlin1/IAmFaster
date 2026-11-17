@@ -1,0 +1,9 @@
+{
+  "typeCheckingMode": "strict",
+  "include": [
+    "app",
+    "utils",
+    "kaykit_previewer",
+    "main.py"
+  ]
+}
