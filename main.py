@@ -1,8 +1,8 @@
 import argparse
 from pathlib import Path
 
-from app.app import DEFAULT_MODEL_PATH, run
-from app.input_backends import BACKEND_CHOICES, DEFAULT_BACKEND_NAME
+from game.app import DEFAULT_MODEL_PATH, run
+from game.input_backends import BACKEND_CHOICES, DEFAULT_BACKEND_NAME
 
 
 def parse_arguments() -> argparse.Namespace:

@@ -9,4 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Training and model artifacts
 gesture_model
+dataset
+snapshot
+assets/models/*.task
+assets/models/*.task.download

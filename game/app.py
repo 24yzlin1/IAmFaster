@@ -5,10 +5,10 @@ from typing import Final
 import moderngl
 import pygame
 
-from app.input_backends.actions import BACKEND_CHOICES, BACKEND_NAMES_ENABLING_GESTURE, GameAction, InputBackend
-from app.input_backends.keyboard import KeyboardInputBackend
-from app.presenters.runner import RunnerPresenter
-from app.views.runner import WINDOW_SIZE, RunnerView
+from game.input_backends.actions import BACKEND_CHOICES, BACKEND_NAMES_ENABLING_GESTURE, GameAction, InputBackend
+from game.input_backends.keyboard import KeyboardInputBackend
+from game.presenters.runner import RunnerPresenter
+from game.views.runner import WINDOW_SIZE, RunnerView
 
 DEFAULT_MODEL_PATH: Final[Path] = Path(__file__).resolve().parents[1] / "gesture_model/gesture_model.pth"
 GESTURE_ACTIONS: Final[dict[str, GameAction]] = {
@@ -25,7 +25,7 @@ def run(model_path: Path, backend_name: str, camera_name: str | None) -> None:
         if backend_name in BACKEND_NAMES_ENABLING_GESTURE:
             if not model_path.is_file():
                 raise FileNotFoundError(f"gesture model not found: {model_path}")
-            from app.input_backends.gesture import GestureInputBackend
+            from game.input_backends.gesture import GestureInputBackend
 
             gestures: GestureInputBackend = GestureInputBackend(
                 model_path, GESTURE_ACTIONS, camera_name=camera_name,

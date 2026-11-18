@@ -5,12 +5,15 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "mediapipe>=1.2.3",
     "moderngl>=5.12.0",
     "numpy>=2.5.4",
     "opencv-python>=5.0.0.93",
     "pillow>=13.0.0",
     "pygame>=2.6.1",
     "pygrabber>=0.2",
+    "pyside6>=6.12.0",
+    "pyusbcameraindex>=1.0.1",
     "torch>=2.15.0",
     "torchvision>=0.29.2",
     "tqdm>=4.70.1",
@@ -21,8 +24,11 @@ url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
 
 [tool.pyright]
-include = ["app", "utils", "main.py"]
+include = ["game", "studio", "utils", "main.py", "studio.py"]
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
 reportMissingTypeStubs = false
+
+[dependency-groups]
+dev = ["pyright>=1.1.407"]

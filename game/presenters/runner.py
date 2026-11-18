@@ -1,5 +1,5 @@
-from app.input_backends.actions import GameAction
-from app.models.runner import Motion, RunnerModel
+from game.input_backends.actions import GameAction
+from game.models.runner import Motion, RunnerModel
 
 
 class RunnerPresenter:

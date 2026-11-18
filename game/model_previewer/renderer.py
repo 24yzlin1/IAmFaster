@@ -15,9 +15,9 @@ import numpy as np
 import numpy.typing as npt
 import pygame
 
-from kaykit_previewer.animation import compute_rest_pose_global_matrices
-from kaykit_previewer.gltf_loader import GltfModel, MeshPrimitiveData, TextureData
-from kaykit_previewer.transform_math import Matrix4, identity_matrix
+from game.model_previewer.animation import compute_rest_pose_global_matrices
+from game.model_previewer.gltf_loader import GltfModel, MeshPrimitiveData, TextureData
+from game.model_previewer.transform_math import Matrix4, identity_matrix
 
 MAXIMUM_JOINT_COUNT = 64
 GRID_EXTENT = 10.0

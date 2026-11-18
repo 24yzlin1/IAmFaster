@@ -6,8 +6,9 @@ the images of each class must be stored directly inside that directory.
 
 import argparse
 import json
+from collections.abc import Sized
 from pathlib import Path
-from typing import Any, Final, Sequence, TypedDict
+from typing import Any, Final, Sequence, TypedDict, cast
 
 import cv2
 import torch
@@ -21,6 +22,7 @@ from utils.common import (
     Channels,
     SampleType,
     Transform,
+    augment_mask,
     default_transform,
     get_device,
     preprocess,
@@ -98,21 +100,46 @@ class GestureDataset(Dataset[SampleType]):
 def build_model(num_classes: int, in_channels: int = 1) -> torch.nn.Module:
     """Build the convolutional network used for gesture classification.
 
-    Feature maps go 128 -> pool -> 64 -> pool -> 32, so the flattened
-    feature vector has 32 * 32 * 32 elements.
+    Feature maps go 128 -> pool -> 64 -> pool -> 32 -> pool -> 16, so the
+    flattened feature vector has 64 * 16 * 16 elements. The first 5x5
+    kernel captures coarse hand shapes, and dropout curbs overfitting.
     """
     return torch.nn.Sequential(
-        torch.nn.Conv2d(in_channels, 16, kernel_size=3, padding=1),
+        torch.nn.Conv2d(in_channels, 16, kernel_size=5, padding=2),
+        torch.nn.BatchNorm2d(16),
         torch.nn.ReLU(),
         torch.nn.MaxPool2d(2),
         torch.nn.Conv2d(16, 32, kernel_size=3, padding=1),
+        torch.nn.BatchNorm2d(32),
+        torch.nn.ReLU(),
+        torch.nn.MaxPool2d(2),
+        torch.nn.Conv2d(32, 64, kernel_size=3, padding=1),
+        torch.nn.BatchNorm2d(64),
         torch.nn.ReLU(),
         torch.nn.MaxPool2d(2),
         torch.nn.Flatten(),
-        torch.nn.Linear(32 * 32 * 32, 128),
+        torch.nn.Linear(64 * 16 * 16, 128),
         torch.nn.ReLU(),
+        torch.nn.Dropout(0.5),
         torch.nn.Linear(128, num_classes),
     )
+
+
+class AugmentedMaskDataset(Dataset[SampleType]):
+    """Wrap a dataset and apply random mask augmentation to each sample."""
+
+    def __init__(self, base_dataset: Dataset[SampleType]) -> None:
+        super().__init__()
+        self.base_dataset: Dataset[SampleType] = base_dataset
+
+    def __getitem__(self, index: int) -> SampleType:
+        tensor, label = self.base_dataset[index]
+        return (augment_mask(tensor), label)
+
+    def __len__(self) -> int:
+        # torch's Dataset protocol does not declare __len__, but every
+        # concrete dataset built by GestureDataset provides one.
+        return len(cast(Sized, self.base_dataset))
 
 
 class ModelTrainer:
@@ -156,6 +183,8 @@ class ModelTrainer:
         train_dataset, validation_dataset = random_split(
             dataset, [training_samples, validation_samples], generator=generator
         )
+        if self.in_channels == 1:
+            train_dataset = AugmentedMaskDataset(train_dataset)
         pin_memory: bool = device.type == "cuda"
         self.train_loader: DataLoader[SampleType] = DataLoader(
             train_dataset,

@@ -7,11 +7,11 @@ import moderngl
 import numpy
 import pygame
 
-from app.models.runner import ACTION_DURATION, LANE_WIDTH, OBSTACLE_STYLES, Hazard, Motion, Obstacle, RunnerModel
-from kaykit_previewer.animation import compute_skinning_matrices, evaluate_global_node_matrices
-from kaykit_previewer.gltf_loader import AnimationClipData, GltfModel, MeshData, MeshPrimitiveData, load_model
-from kaykit_previewer.renderer import ModelRenderResources, Renderer, get_uniform
-from kaykit_previewer.transform_math import Matrix4, Vector3, build_look_at_matrix, build_perspective_matrix, identity_matrix
+from game.models.runner import ACTION_DURATION, LANE_WIDTH, OBSTACLE_STYLES, Hazard, Motion, Obstacle, RunnerModel
+from game.model_previewer.animation import compute_skinning_matrices, evaluate_global_node_matrices
+from game.model_previewer.gltf_loader import AnimationClipData, GltfModel, MeshData, MeshPrimitiveData, load_model
+from game.model_previewer.renderer import ModelRenderResources, Renderer, get_uniform
+from game.model_previewer.transform_math import Matrix4, Vector3, build_look_at_matrix, build_perspective_matrix, identity_matrix
 
 ASSETS: Final[Path] = Path(__file__).resolve().parents[2] / "assets"
 WINDOW_SIZE: Final[tuple[int, int]] = (960, 640)

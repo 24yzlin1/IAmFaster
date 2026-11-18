@@ -4,7 +4,7 @@ from typing import Final
 
 import pygame
 
-from app.input_backends.actions import GameAction
+from game.input_backends.actions import GameAction
 
 QUIT_KEY: Final[int] = pygame.K_ESCAPE
 RESET_KEY: Final[int] = pygame.K_r

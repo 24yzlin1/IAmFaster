@@ -19,7 +19,7 @@ import numpy as np
 import numpy.typing as npt
 import pygame
 
-from kaykit_previewer.transform_math import (
+from game.model_previewer.transform_math import (
     Matrix4,
     Quaternion,
     Vector3,

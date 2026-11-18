@@ -12,8 +12,8 @@ from typing import Final, NamedTuple
 
 from cv2.typing import MatLike
 
-from app.input_backends.actions import GameAction
-from app.input_backends.camera import CameraFrameReader, create_camera_frame_reader
+from game.input_backends.actions import GameAction
+from game.input_backends.camera import CameraFrameReader, create_camera_frame_reader
 from utils.predictor import GesturePrediction, GesturePredictor
 
 DEFAULT_CONFIDENCE_THRESHOLD: Final[float] = 0.8

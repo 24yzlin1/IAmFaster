@@ -564,7 +564,7 @@ def rotate(img: Tensor, angle: float, interpolation: InterpolationMode = ..., ex
     """
     ...
 
-def affine(img: Tensor, angle: float, translate: list[int], scale: float, shear: list[float], interpolation: InterpolationMode = ..., fill: Optional[list[float]] = ..., center: Optional[list[int]] = ...) -> Tensor:
+def affine(img: Tensor, angle: float, translate: list[float], scale: float, shear: Union[float, list[float]], interpolation: InterpolationMode = ..., fill: Optional[Union[float, list[float]]] = ..., center: Optional[list[int]] = ...) -> Tensor:
     """Apply affine transformation on the image keeping image center invariant.
     If the image is torch Tensor, it is expected
     to have [..., H, W] shape, where ... means an arbitrary number of leading dimensions.

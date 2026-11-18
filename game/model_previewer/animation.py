@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
-from kaykit_previewer.gltf_loader import (
+from game.model_previewer.gltf_loader import (
     AnimationChannelData,
     AnimationClipData,
     GltfModel,
@@ -20,7 +20,7 @@ from kaykit_previewer.gltf_loader import (
     TARGET_PATH_SCALE,
     TARGET_PATH_TRANSLATION,
 )
-from kaykit_previewer.transform_math import (
+from game.model_previewer.transform_math import (
     Matrix4,
     Quaternion,
     Vector3,
