@@ -13,6 +13,7 @@ from game.model_previewer.animation import compute_skinning_matrices, evaluate_g
 from game.model_previewer.gltf_loader import AnimationClipData, GltfModel, MeshData, MeshPrimitiveData, load_model
 from game.model_previewer.renderer import ModelRenderResources, Renderer, get_uniform
 from game.model_previewer.transform_math import Matrix4, Vector3, build_look_at_matrix, build_perspective_matrix, identity_matrix
+from game.views.ui import DEFAULT_TEXT_COLOR, UiLayer
 
 ASSETS: Final[Path] = Path(__file__).resolve().parents[2] / "assets"
 WINDOW_SIZE: Final[tuple[int, int]] = (960, 640)
@@ -59,6 +60,7 @@ class RunnerView:
         self.context: moderngl.Context = context
         self.environment: EnvironmentPreset = environment
         self.renderer: Renderer = Renderer(context, WINDOW_SIZE)
+        self.ui: UiLayer = UiLayer(context, WINDOW_SIZE)
         self.character: GltfModel = load_model(character_path)
         self.resources: ModelRenderResources = self.renderer.upload_model(self.character, identity_matrix())
         self.obstacle_resources: dict[tuple[Hazard, int], ModelRenderResources] = {}
@@ -149,10 +151,18 @@ class RunnerView:
             placement[1, 3] += 0.14
             placement[2, 3] -= 0.62
         self.renderer.render_model(self.resources, self.projection, compute_skinning_matrices(self.character, pose, placement))
+        # HUD text sits directly on the scene with no panel behind it.
         lines: list[str] = [f"Distance  {int(model.distance)} m"]
         if model.crashed:
-            lines.append("Run over. Press R or make a fist to continue.")
+            lines.append("Run over.")
         else:
             lines.append("Left / Right: change lane    Up: jump    Down: slide")
-        self.renderer.draw_text_overlay(lines)
+        line_y: int = 12
+        line: str
+        for line in lines:
+            self.ui.draw_text(
+                line, (16, line_y, WINDOW_SIZE[0] - 32, 28),
+                font_size=20, color=DEFAULT_TEXT_COLOR, align="left",
+            )
+            line_y += 30
         pygame.display.flip()

@@ -13,7 +13,7 @@ TITLE_TEXT: Final[str] = "Run Over"
 SCORE_TEXT: Final[str] = "Score"
 BEST_TEXT: Final[str] = "Best"
 NEW_RECORD_TEXT: Final[str] = "New record!"
-FOOTER_TEXT: Final[str] = "Up/Down: select    R / Fist: confirm    Esc: menu"
+FOOTER_TEXT: Final[str] = "Up/Down: select    Enter / Fist: confirm    Esc: menu"
 
 
 class SettlementView:

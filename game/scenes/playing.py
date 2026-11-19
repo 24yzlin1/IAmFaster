@@ -23,15 +23,17 @@ class PlayingScene(Scene):
             from game.scenes.menu import MenuScene
 
             self._host.switch_scene(MenuScene(self._host))
-        elif action is GameAction.RESET and self.presenter.model.crashed:
-            self._finish_run()
         else:
             self.presenter.handle_action(action)
 
     def advance(self, seconds: float) -> None:
-        if not self.presenter.model.crashed:
-            self.run_time += seconds
+        if self.presenter.model.crashed:
+            return
+        self.run_time += seconds
         self.presenter.model.advance(seconds)
+        if self.presenter.model.crashed:
+            # The run ends the moment the character crashes.
+            self._finish_run()
 
     def _finish_run(self) -> None:
         """Record the crashed run and move to the settlement screen."""

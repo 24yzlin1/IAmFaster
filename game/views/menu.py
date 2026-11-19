@@ -10,7 +10,7 @@ from game.views.runner import WINDOW_SIZE
 from game.views.ui import DEFAULT_TEXT_COLOR, HIGHLIGHT_TEXT_COLOR, Color, UiLayer
 
 TITLE_TEXT: Final[str] = "I Am Faster"
-FOOTER_TEXT: Final[str] = "Up/Down: select    R / Fist: confirm    Esc: back"
+FOOTER_TEXT: Final[str] = "Up/Down: select    Enter / Fist: confirm    Esc: back"
 
 
 class MenuView:

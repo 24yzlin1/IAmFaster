@@ -10,7 +10,7 @@ from game.views.runner import WINDOW_SIZE
 from game.views.ui import HIGHLIGHT_TEXT_COLOR, UiLayer
 
 TITLE_TEXT: Final[str] = "Run History"
-FOOTER_TEXT: Final[str] = "Esc / R / Fist: back to menu"
+FOOTER_TEXT: Final[str] = "Esc / Enter / Fist: back to menu"
 ROW_LIMIT: Final[int] = 10
 ROW_HEIGHT: Final[int] = 38
 

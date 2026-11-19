@@ -7,7 +7,7 @@ import pygame
 from game.input_backends.actions import GameAction
 
 QUIT_KEY: Final[int] = pygame.K_ESCAPE
-RESET_KEY: Final[int] = pygame.K_r
+CONFIRM_KEY: Final[int] = pygame.K_RETURN
 INCREMENT_MOUSE_BUTTON: Final[int] = 1
 
 
@@ -16,9 +16,10 @@ class KeyboardInputBackend:
 
     def __init__(self, enable_game_keys: bool = True) -> None:
         # The escape key means "go back one screen"; only closing the
-        # window produces QUIT, which ends the application.
+        # window produces QUIT, which ends the application.  Enter is the
+        # keyboard confirm key, matching the fist gesture.
         self._key_actions: dict[int, GameAction] = {
-            QUIT_KEY: GameAction.BACK, RESET_KEY: GameAction.RESET,
+            QUIT_KEY: GameAction.BACK, CONFIRM_KEY: GameAction.RESET,
         }
         if enable_game_keys:
             self._key_actions.update({

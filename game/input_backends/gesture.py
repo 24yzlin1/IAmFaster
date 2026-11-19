@@ -179,6 +179,7 @@ class GestureInputBackend:
         gesture_event = self._source.poll()
         if gesture_event is None:
             return []
+        print(f"[gesture] {gesture_event.class_name} ({gesture_event.confidence:.2f})")
         gesture_action = self._gesture_actions.get(gesture_event.class_name)
         if gesture_action is None:
             return []

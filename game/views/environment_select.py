@@ -11,7 +11,7 @@ from game.views.ui import DEFAULT_TEXT_COLOR, HIGHLIGHT_TEXT_COLOR, Color, UiLay
 
 TITLE_TEXT: Final[str] = "Environment"
 CURRENT_MARKER: Final[str] = " (current)"
-FOOTER_TEXT: Final[str] = "Up/Down: select    R / Fist: confirm    Esc: back"
+FOOTER_TEXT: Final[str] = "Up/Down: select    Enter / Fist: confirm    Esc: back"
 
 
 class EnvironmentSelectView:
