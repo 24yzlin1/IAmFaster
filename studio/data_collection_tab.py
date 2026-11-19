@@ -1,10 +1,11 @@
-"""Data collection tab: capture labelled hand crops for training."""
+"""Data collection tab: capture labelled training samples for either route."""
 
 import time
 from datetime import datetime
 from pathlib import Path
 
 import cv2
+import numpy
 from cv2.typing import MatLike
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
@@ -29,9 +30,10 @@ from studio.camera import (
     create_camera_frame_reader,
     list_camera_names,
 )
-from studio.hand_region import draw_square_region
+from studio.hand_region import draw_landmark_points, draw_square_region
 from mediapipe.tasks.python import vision
 from utils.hand_detector import HandBox, HandDetector
+from utils.segment import segment
 
 LABELS: list[str] = ["Fist", "Palm", "Up", "Down", "Left", "Right"]
 CAPTURE_INTERVAL: float = 0.5
@@ -50,6 +52,7 @@ class DataCollectionTab(QWidget):
         self._camera_reader: CameraFrameReader | None = None
         self._hand_detector: HandDetector | None = None
         self._detected_hand_box: HandBox | None = None
+        self._landmark_points: list[tuple[int, int]] | None = None
         self._render_frame_count: int = 0
         self._is_recording: bool = False
         self._last_capture_monotonic_time: float = 0.0
@@ -70,6 +73,12 @@ class DataCollectionTab(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self.preview_label.setStyleSheet(PREVIEW_LABEL_STYLE)
+
+        self.mask_label: QLabel = QLabel("Mask preview (segment).")
+        # Square: the hand-box crop fed to the mask route is square too.
+        self.mask_label.setFixedSize(280, 280)
+        self.mask_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.mask_label.setStyleSheet(PREVIEW_LABEL_STYLE)
 
         settings_group: QGroupBox = QGroupBox("Settings")
         form_layout: QFormLayout = QFormLayout(settings_group)
@@ -110,6 +119,7 @@ class DataCollectionTab(QWidget):
         sidebar_widget: QWidget = QWidget()
         sidebar_widget.setFixedWidth(SIDEBAR_WIDTH)
         sidebar_layout: QVBoxLayout = QVBoxLayout(sidebar_widget)
+        sidebar_layout.addWidget(self.mask_label)
         sidebar_layout.addWidget(settings_group)
         sidebar_layout.addWidget(self.camera_button)
         sidebar_layout.addWidget(self.record_button)
@@ -149,10 +159,12 @@ class DataCollectionTab(QWidget):
         self._render_timer.start()
         self._render_frame_count = 0
         self._detected_hand_box = None
+        self._landmark_points = None
         self.camera_button.setText("Stop Camera")
         self.camera_combobox.setEnabled(False)
         self.record_button.setEnabled(True)
         self.preview_label.setText("")
+        self.mask_label.setText("")
 
     def _stop_camera(self) -> None:
         self._render_timer.stop()
@@ -161,6 +173,7 @@ class DataCollectionTab(QWidget):
         self._camera_reader = None
         self._hand_detector = None
         self._detected_hand_box = None
+        self._landmark_points = None
         self._is_recording = False
         self._current_frame = None
         if camera_reader is not None:
@@ -173,6 +186,8 @@ class DataCollectionTab(QWidget):
         self.record_button.setText("Start Recording")
         self.preview_label.setText("Camera stopped.")
         self.preview_label.setPixmap(QPixmap())
+        self.mask_label.setText("Mask preview (segment).")
+        self.mask_label.setPixmap(QPixmap())
 
     def _toggle_recording(self) -> None:
         if self._is_recording:
@@ -185,16 +200,23 @@ class DataCollectionTab(QWidget):
 
     def _refresh_detected_hand_box(self) -> None:
         """Re-run MediaPipe detection every few render frames so the preview
-        box tracks the hand without slowing rendering down."""
+        skeleton tracks the hand without slowing rendering down."""
         hand_detector: HandDetector | None = self._hand_detector
         current_frame: MatLike | None = self._current_frame
         if hand_detector is None or current_frame is None:
             self._detected_hand_box = None
+            self._landmark_points = None
             return
         self._render_frame_count += 1
         if self._render_frame_count % DETECTION_EVERY_N_FRAMES != 0:
             return
-        self._detected_hand_box = hand_detector.detect_hand_box(current_frame)
+        self._landmark_points = hand_detector.detect_landmark_points(current_frame)
+        frame_height: int
+        frame_width: int
+        frame_height, frame_width = current_frame.shape[:2]
+        self._detected_hand_box = HandDetector.box_from_points(
+            self._landmark_points or [], frame_width, frame_height
+        )
 
     def _render_frame(self) -> None:
         camera_reader: CameraFrameReader | None = self._camera_reader
@@ -215,6 +237,9 @@ class DataCollectionTab(QWidget):
                 self._detected_hand_box.top_y,
                 self._detected_hand_box.size,
             )
+        if self._landmark_points is not None:
+            draw_landmark_points(display_frame, self._landmark_points)
+        self._update_mask_preview()
         qt_image = convert_frame_to_qimage(display_frame)
         self.preview_label.setPixmap(
             QPixmap.fromImage(qt_image).scaled(
@@ -228,28 +253,53 @@ class DataCollectionTab(QWidget):
             and time.monotonic() - self._last_capture_monotonic_time
             >= CAPTURE_INTERVAL
         ):
-            self._save_current_crop()
+            self._save_current_capture()
             self._last_capture_monotonic_time = time.monotonic()
 
-    def _save_current_crop(self) -> None:
+    def _update_mask_preview(self) -> None:
+        """Show the skin-segmentation result of the hand-box crop in the
+        sidebar, matching the green region used for saving."""
         current_frame: MatLike | None = self._current_frame
-        if current_frame is None:
+        hand_box: HandBox | None = self._detected_hand_box
+        if current_frame is None or hand_box is None:
             return
-        detected_crop: MatLike | None = (
-            self._hand_detector.crop_hand(current_frame)
-            if self._hand_detector is not None
-            else None
+        hand_crop: MatLike = current_frame[
+            hand_box.top_y : hand_box.top_y + hand_box.size,
+            hand_box.left_x : hand_box.left_x + hand_box.size,
+        ].copy()
+        segmented_mask: MatLike = segment(hand_crop)
+        mask_bgr: MatLike = cv2.cvtColor(segmented_mask, cv2.COLOR_GRAY2BGR)
+        qt_image = convert_frame_to_qimage(mask_bgr)
+        self.mask_label.setPixmap(
+            QPixmap.fromImage(qt_image).scaled(
+                self.mask_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         )
-        if detected_crop is None:
-            # No hand detected: skip this capture entirely instead of saving
-            # a fallback crop that may not even contain the hand.
+
+    def _save_current_capture(self) -> None:
+        current_frame: MatLike | None = self._current_frame
+        hand_detector: HandDetector | None = self._hand_detector
+        if current_frame is None or hand_detector is None:
             return
         try:
             label_name: str = self.label_combobox.currentText()
             label_directory: Path = Path(self.dataset_root_edit.text()) / label_name
             label_directory.mkdir(parents=True, exist_ok=True)
-            filename: str = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".jpg"
-            cv2.imwrite(str(label_directory / filename), detected_crop)
+            stem: str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            # Save both routes at once so a single collection session feeds
+            # the mask CNN and the landmark MLP without a conversion step.
+            hand_crop: MatLike | None = hand_detector.crop_hand(current_frame)
+            if hand_crop is not None:
+                cv2.imwrite(str(label_directory / (stem + ".jpg")), hand_crop)
+            feature_vector = hand_detector.detect_landmark_vector(current_frame)
+            if feature_vector is not None:
+                numpy.save(label_directory / (stem + ".npy"), feature_vector)
+            if hand_crop is None and feature_vector is None:
+                # No hand detected: skip this capture entirely instead of
+                # saving files that may not even contain the hand.
+                return
         except (OSError, cv2.error, IndexError) as error:
             self._is_recording = False
             self.record_button.setText("Start Recording")

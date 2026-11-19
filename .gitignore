@@ -12,6 +12,7 @@ wheels/
 # Training and model artifacts
 gesture_model
 dataset
+dataset_landmark
 snapshot
 assets/models/*.task
 assets/models/*.task.download

@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import cv2
+from cv2.typing import MatLike
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import Qt
@@ -24,8 +26,10 @@ from studio.camera import (
     convert_frame_to_qimage,
     list_camera_names,
 )
-from studio.hand_region import draw_square_region
+from studio.hand_region import draw_landmark_points, draw_square_region
 from studio.prediction_worker import PredictionResult, PredictionWorker
+from utils.hand_detector import HandBox
+from utils.segment import segment
 
 DEFAULT_MODEL_PATH: str = "gesture_model/gesture_model.pth"
 RENDER_INTERVAL_MILLISECONDS: int = 33
@@ -75,6 +79,12 @@ class InferenceTab(QWidget):
         )
         self.preview_label.setStyleSheet(PREVIEW_LABEL_STYLE)
 
+        self.mask_label: QLabel = QLabel("Mask preview (segment).")
+        # Square: the hand-box crop fed to the mask route is square too.
+        self.mask_label.setFixedSize(280, 280)
+        self.mask_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.mask_label.setStyleSheet(PREVIEW_LABEL_STYLE)
+
         self.result_label: QLabel = QLabel("No prediction yet.")
         self.result_label.setWordWrap(True)
 
@@ -84,6 +94,7 @@ class InferenceTab(QWidget):
         sidebar_widget: QWidget = QWidget()
         sidebar_widget.setFixedWidth(SIDEBAR_WIDTH)
         sidebar_layout: QVBoxLayout = QVBoxLayout(sidebar_widget)
+        sidebar_layout.addWidget(self.mask_label)
         sidebar_layout.addWidget(settings_group)
         sidebar_layout.addWidget(self.toggle_button)
         sidebar_layout.addWidget(self.result_label)
@@ -122,7 +133,8 @@ class InferenceTab(QWidget):
         worker.finished.connect(self._on_worker_finished)
         self._worker = worker
         self._set_controls_enabled(False)
-        self.preview_label.setText("Loading the model...")
+        self.preview_label.setText("")
+        self.mask_label.setText("")
         worker.start()
         self._render_timer.start()
 
@@ -135,6 +147,8 @@ class InferenceTab(QWidget):
         worker.wait()
         self._worker = None
         self.preview_label.setText("Inference stopped.")
+        self.mask_label.setText("Mask preview (segment).")
+        self.mask_label.setPixmap(QPixmap())
         self.result_label.setText("No prediction yet.")
         self._set_controls_enabled(True)
 
@@ -152,6 +166,9 @@ class InferenceTab(QWidget):
                 result.hand_box.top_y,
                 result.hand_box.size,
             )
+        if result.landmark_points is not None:
+            draw_landmark_points(result.frame, result.landmark_points)
+        self._update_mask_preview(result.frame, result.hand_box)
         qt_image: QImage = convert_frame_to_qimage(result.frame)
         self.preview_label.setPixmap(
             QPixmap.fromImage(qt_image).scaled(
@@ -180,11 +197,40 @@ class InferenceTab(QWidget):
             )
         )
 
+    def _update_mask_preview(self, frame: MatLike, hand_box: HandBox | None) -> None:
+        """Show the skin-segmentation result of the hand-box crop in the
+        sidebar, matching the green region fed to the model."""
+        if hand_box is None:
+            return
+        hand_crop: MatLike = frame[
+            hand_box.top_y : hand_box.top_y + hand_box.size,
+            hand_box.left_x : hand_box.left_x + hand_box.size,
+        ].copy()
+        segmented_mask: MatLike = segment(hand_crop)
+        mask_bgr: MatLike = cv2.cvtColor(segmented_mask, cv2.COLOR_GRAY2BGR)
+        qt_image: QImage = convert_frame_to_qimage(mask_bgr)
+        self.mask_label.setPixmap(
+            QPixmap.fromImage(qt_image).scaled(
+                self.mask_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        self.mask_label.setPixmap(
+            QPixmap.fromImage(qt_image).scaled(
+                self.mask_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
     def _on_worker_failed(self, error_message: str) -> None:
         self._render_timer.stop()
         self._worker = None
         self._set_controls_enabled(True)
         self.preview_label.setText("Inference stopped.")
+        self.mask_label.setText("Mask preview (segment).")
+        self.mask_label.setPixmap(QPixmap())
         QMessageBox.critical(self, "Inference failed", error_message)
 
     def _on_worker_finished(self) -> None:

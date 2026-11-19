@@ -14,6 +14,7 @@ from cv2.typing import MatLike
 
 from game.input_backends.actions import GameAction
 from game.input_backends.camera import CameraFrameReader, create_camera_frame_reader
+from utils.landmark import HandNotDetectedError
 from utils.predictor import GesturePrediction, GesturePredictor
 
 DEFAULT_CONFIDENCE_THRESHOLD: Final[float] = 0.8
@@ -102,7 +103,20 @@ class GestureInputSource:
         while not self._stop_event.is_set():
             frame = self._read_frame()
             if frame is not None:
-                self._update_confirmation(self._predictor.predict(frame))
+                try:
+                    self._update_confirmation(self._predictor.predict(frame))
+                except HandNotDetectedError:
+                    # Landmark models report a missing hand as an exception;
+                    # treat the frame like a zero-confidence prediction so
+                    # the debouncer releases any confirmed gesture.
+                    self._update_confirmation(
+                        GesturePrediction(
+                            class_name="",
+                            class_index=-1,
+                            confidence=0.0,
+                            probabilities={},
+                        )
+                    )
             sleep(DEFAULT_WORKER_INTERVAL_SECONDS)
 
     def _update_confirmation(self, prediction: GesturePrediction) -> None:

@@ -6,11 +6,15 @@ the images of each class must be stored directly inside that directory.
 
 import argparse
 import json
-from collections.abc import Sized
+import time
+from collections.abc import Callable, Sized
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Final, Sequence, TypedDict, cast
 
 import cv2
+import numpy
+import numpy.typing
 import torch
 from cv2.typing import MatLike
 from torch.utils.data import DataLoader, Dataset, random_split
@@ -20,6 +24,7 @@ from utils.common import (
     EXTENSIONS,
     IMG_SIZE,
     Channels,
+    InputType,
     SampleType,
     Transform,
     augment_mask,
@@ -27,6 +32,7 @@ from utils.common import (
     get_device,
     preprocess,
 )
+from utils.landmark import FEATURE_DIMENSIONS, augment_landmark_vector
 
 PROGRESS_BAR_WIDTH: Final[int] = 50
 
@@ -97,6 +103,66 @@ class GestureDataset(Dataset[SampleType]):
         return len(self.samples)
 
 
+class LandmarkDataset(Dataset[SampleType]):
+    """Feature dataset that maps subdirectories under *root* to class labels.
+
+    Each sample is a ``.npy`` file holding one flat normalized landmark
+    vector produced by ``utils.convert_dataset``.
+    """
+
+    def __init__(self, root: Path | str) -> None:
+        super().__init__()
+        self.root: Path = Path(root)
+        self.classes: list[str] = []
+        self.class_to_index: dict[str, int] = {}
+        self.samples: list[tuple[Path, int]] = []
+        self._load_data()
+        if not self.samples:
+            raise RuntimeError(
+                "No landmark feature files found under {}. Expected layout: "
+                "root/class_name/*.npy (run 'python -m utils.convert_dataset' "
+                "to convert an image dataset).".format(self.root)
+            )
+
+    def _load_data(self) -> None:
+        self.classes = sorted(
+            path.name
+            for path in self.root.iterdir()
+            if path.is_dir() and not path.name.startswith(".")
+        )
+        self.class_to_index = {
+            class_name: label for label, class_name in enumerate(self.classes)
+        }
+        for class_name, label in self.class_to_index.items():
+            class_directory: Path = self.root / class_name
+            for file_path in class_directory.iterdir():
+                if file_path.is_file() and file_path.suffix.lower() == ".npy":
+                    self.samples.append((file_path, label))
+
+    @property
+    def feature_dimensions(self) -> int:
+        """Return the number of elements of the produced feature vectors."""
+        return FEATURE_DIMENSIONS
+
+    def __getitem__(self, index: int) -> SampleType:
+        file_path, label = self.samples[index]
+        vector: numpy.typing.NDArray[Any] = numpy.load(file_path)
+        if vector.shape != (FEATURE_DIMENSIONS,):
+            raise RuntimeError(
+                "Feature file {} has shape {}, expected ({},).".format(
+                    file_path, vector.shape, FEATURE_DIMENSIONS
+                )
+            )
+        contiguous_vector: numpy.typing.NDArray[Any] = numpy.ascontiguousarray(
+            vector, dtype=numpy.float32
+        )
+        tensor: torch.Tensor = torch.from_numpy(contiguous_vector)  # type: ignore
+        return (tensor, torch.tensor(label, dtype=torch.long))
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+
 def build_model(num_classes: int, in_channels: int = 1) -> torch.nn.Module:
     """Build the convolutional network used for gesture classification.
 
@@ -125,16 +191,38 @@ def build_model(num_classes: int, in_channels: int = 1) -> torch.nn.Module:
     )
 
 
-class AugmentedMaskDataset(Dataset[SampleType]):
-    """Wrap a dataset and apply random mask augmentation to each sample."""
+def build_landmark_model(num_classes: int) -> torch.nn.Module:
+    """Build the MLP classifier over normalized landmark feature vectors.
 
-    def __init__(self, base_dataset: Dataset[SampleType]) -> None:
+    Landmarks are already translation- and scale-invariant semantic
+    features, so a small fully connected network is sufficient and
+    trains in seconds even on CPU.
+    """
+    return torch.nn.Sequential(
+        torch.nn.Linear(FEATURE_DIMENSIONS, 128),
+        torch.nn.ReLU(),
+        torch.nn.Dropout(0.3),
+        torch.nn.Linear(128, 64),
+        torch.nn.ReLU(),
+        torch.nn.Linear(64, num_classes),
+    )
+
+
+class AugmentedDataset(Dataset[SampleType]):
+    """Wrap a dataset and apply an augmentation function to each sample."""
+
+    def __init__(
+        self,
+        base_dataset: Dataset[SampleType],
+        augment: Callable[[torch.Tensor], torch.Tensor],
+    ) -> None:
         super().__init__()
         self.base_dataset: Dataset[SampleType] = base_dataset
+        self.augment: Callable[[torch.Tensor], torch.Tensor] = augment
 
     def __getitem__(self, index: int) -> SampleType:
         tensor, label = self.base_dataset[index]
-        return (augment_mask(tensor), label)
+        return (self.augment(tensor), label)
 
     def __len__(self) -> int:
         # torch's Dataset protocol does not declare __len__, but every
@@ -159,6 +247,7 @@ class ModelTrainer:
         num_workers: int = 0,
         validate_split: float = 0.2,
         seed: int = 42,
+        input_type: InputType = "mask",
     ) -> None:
         self.device: torch.device = device
         self.model: torch.nn.Module = model.to(device)
@@ -166,13 +255,18 @@ class ModelTrainer:
         self.epoch: int = epoch
         self.classes: list[str] = list(classes) if classes is not None else []
         self.in_channels: int = in_channels
+        self.input_type: InputType = input_type
         self.history: list[EpochRecord] = []
         self.best_validation_accuracy: float = 0.0
+        self.best_epoch: int = 0
+        self._log_file: Path | None = None
         total_samples: int = len(dataset)  # type: ignore
         if not 0 <= validate_split < 1:
             raise ValueError("validate_split must be in [0, 1).")
         validation_samples: int = int(total_samples * validate_split)
         training_samples: int = total_samples - validation_samples
+        self.training_sample_count: int = training_samples
+        self.validation_sample_count: int = validation_samples
         if training_samples == 0 or validation_samples == 0:
             raise ValueError(
                 "Too few samples ({}) to split by {:.0%} into train/validation sets.".format(
@@ -183,8 +277,10 @@ class ModelTrainer:
         train_dataset, validation_dataset = random_split(
             dataset, [training_samples, validation_samples], generator=generator
         )
-        if self.in_channels == 1:
-            train_dataset = AugmentedMaskDataset(train_dataset)
+        if self.input_type == "landmark":
+            train_dataset = AugmentedDataset(train_dataset, augment_landmark_vector)
+        elif self.in_channels == 1:
+            train_dataset = AugmentedDataset(train_dataset, augment_mask)
         pin_memory: bool = device.type == "cuda"
         self.train_loader: DataLoader[SampleType] = DataLoader(
             train_dataset,
@@ -219,12 +315,31 @@ class ModelTrainer:
         )
         if snapshot_directory is not None:
             snapshot_directory.mkdir(parents=True, exist_ok=True)
+            self._log_file = snapshot_directory / "{}_training_log.jsonl".format(
+                save_name_prefix
+            )
+            self._write_log_entry(
+                {
+                    "type": "header",
+                    "input_type": self.input_type,
+                    "in_channels": self.in_channels,
+                    "classes": self.classes,
+                    "training_samples": self.training_sample_count,
+                    "validation_samples": self.validation_sample_count,
+                    "epoch_count": self.epoch,
+                    "batch_size": self.train_loader.batch_size,
+                    "learning_rate": self.optimizer.param_groups[0]["lr"],
+                    "device": str(self.device),
+                }
+            )
+        run_start_time: float = time.time()
         epoch_progress: tqdm[Any] = tqdm(
             total=self.epoch,
             ncols=PROGRESS_BAR_WIDTH,
             leave=True,
         )
         for epoch in range(1, self.epoch + 1):
+            epoch_start_time: float = time.time()
             train_loss, train_accuracy = self._train_epoch(epoch)
             validation_loss, validation_accuracy = self._validate()
             epoch_progress.set_postfix(  # type: ignore
@@ -239,6 +354,18 @@ class ModelTrainer:
                 "validation_accuracy": validation_accuracy,
             }
             self.history.append(epoch_record)
+            if self._log_file is not None:
+                self._write_log_entry(
+                    {
+                        "type": "epoch",
+                        "epoch": epoch,
+                        "train_loss": round(train_loss, 6),
+                        "train_accuracy": round(train_accuracy, 6),
+                        "validation_loss": round(validation_loss, 6),
+                        "validation_accuracy": round(validation_accuracy, 6),
+                        "elapsed_seconds": round(time.time() - epoch_start_time, 1),
+                    }
+                )
             if snapshot_directory is not None and epoch % save_frequency == 0:
                 snapshot_path: Path = snapshot_directory / "{}_{:02d}.pth".format(
                     save_name_prefix, epoch
@@ -247,6 +374,7 @@ class ModelTrainer:
                 tqdm.write("Snapshot saved: {}".format(snapshot_path))
             if validation_accuracy > self.best_validation_accuracy:
                 self.best_validation_accuracy = validation_accuracy
+                self.best_epoch = epoch
                 if snapshot_directory is not None:
                     best_checkpoint_path: Path = (
                         snapshot_directory / "{}_best.pth".format(save_name_prefix)
@@ -257,7 +385,30 @@ class ModelTrainer:
         tqdm.write(
             "Best validation accuracy: {:.2%}".format(self.best_validation_accuracy)
         )
+        if self._log_file is not None:
+            self._write_log_entry(
+                {
+                    "type": "summary",
+                    "best_epoch": self.best_epoch,
+                    "best_validation_accuracy": round(
+                        self.best_validation_accuracy, 6
+                    ),
+                    "final_validation_accuracy": round(
+                        self.history[-1]["validation_accuracy"], 6
+                    ),
+                    "total_seconds": round(time.time() - run_start_time, 1),
+                }
+            )
         return self.history
+
+    def _write_log_entry(self, entry: dict[str, object]) -> None:
+        """Append one JSON line to the training log in the snapshot directory."""
+        log_file: Path | None = self._log_file
+        if log_file is None:
+            return
+        entry["timestamp"] = datetime.now().isoformat(timespec="seconds")
+        with log_file.open("a", encoding="utf-8") as log_stream:
+            log_stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def _train_epoch(self, epoch: int) -> tuple[float, float]:
         self.model.train()
@@ -317,7 +468,11 @@ class ModelTrainer:
 
     def save(self, path: Path | str, as_state_dict: bool = False) -> Path:
         """Save a full torch.nn.Module (torch.load(..., weights_only=False) on the
-        predictor side), plus the class table and the preprocessing metadata."""
+        predictor side), plus the class table and the preprocessing metadata.
+
+        For landmark models the ``in_channels`` field stores the feature
+        vector length instead of an image channel count.
+        """
         model_path: Path = Path(path)
         model_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.model.state_dict() if as_state_dict else self.model, model_path)
@@ -328,7 +483,11 @@ class ModelTrainer:
         metadata_path: Path = model_path.with_suffix(".meta.json")
         metadata_path.write_text(
             json.dumps(
-                {"in_channels": self.in_channels, "img_size": IMG_SIZE},
+                {
+                    "input_type": self.input_type,
+                    "in_channels": self.in_channels,
+                    "img_size": IMG_SIZE,
+                },
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -363,6 +522,13 @@ def parse_arguments() -> argparse.Namespace:
         default=20,
         help="Number of training epochs.",
     )
+    parser.add_argument(
+        "--input-type",
+        choices=("mask", "landmark"),
+        default="mask",
+        help="Feature route: 'mask' trains the skin-mask CNN, 'landmark' "
+        "trains the landmark MLP on .npy feature files.",
+    )
     return parser.parse_args()
 
 
@@ -373,17 +539,25 @@ def main() -> None:
     dataset_root: Path = arguments.dataset
     model_path: Path = arguments.model_path
     epoch_count: int = arguments.epoch_count
-    channels: Channels = 1
+    input_type: InputType = arguments.input_type
     device: torch.device = get_device()
-    dataset: GestureDataset = GestureDataset(dataset_root, channels=channels)
+    dataset: GestureDataset | LandmarkDataset
+    model: torch.nn.Module
+    in_channels: int
+    if input_type == "landmark":
+        dataset = LandmarkDataset(dataset_root)
+        model = build_landmark_model(num_classes=len(dataset.classes))
+        in_channels = FEATURE_DIMENSIONS
+    else:
+        channels: Channels = 1
+        dataset = GestureDataset(dataset_root, channels=channels)
+        model = build_model(num_classes=len(dataset.classes), in_channels=channels)
+        in_channels = channels
     print("Classes ({}): {}".format(len(dataset.classes), dataset.classes))
     print(
-        "Samples: {} | channels: {} | device: {}".format(
-            len(dataset), dataset.in_channels, device
+        "Samples: {} | input type: {} | device: {}".format(
+            len(dataset), input_type, device
         )
-    )
-    model: torch.nn.Module = build_model(
-        num_classes=len(dataset.classes), in_channels=channels
     )
     trainer: ModelTrainer = ModelTrainer(
         model=model,
@@ -391,10 +565,11 @@ def main() -> None:
         device=device,
         epoch=epoch_count,
         classes=dataset.classes,
-        in_channels=channels,
+        in_channels=in_channels,
         batch_size=32,
         learning_rate=1e-3,
         validate_split=0.2,
+        input_type=input_type,
     )
     trainer.train(
         save_dir=Path("./snapshot"), save_name_prefix="gesture", save_frequency=5

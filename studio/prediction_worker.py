@@ -18,12 +18,14 @@ IDLE_SLEEP_MILLISECONDS: int = 5
 class PredictionResult(NamedTuple):
     """A camera frame together with the prediction computed from it.
 
-    *prediction* is None when no hand was detected in the frame.
+    *prediction* is None when no hand was detected in the frame;
+    *landmark_points* holds the drawn hand skeleton, if a hand is visible.
     """
 
     frame: MatLike
     prediction: GesturePrediction | None
     hand_box: HandBox | None
+    landmark_points: list[tuple[int, int]] | None
 
 
 class PredictionWorker(QThread):
@@ -70,8 +72,19 @@ class PredictionWorker(QThread):
                 # Track the hand with MediaPipe so the model is fed a tight,
                 # position-independent crop. Without a hand the frame is
                 # published without a prediction, keeping the preview live
-                # without showing stale or unreliable results.
-                hand_box: HandBox | None = hand_detector.detect_hand_box(frame)
+                # without showing stale or unreliable results. The landmark
+                # points are also kept for drawing the hand skeleton.
+                frame_height: int
+                frame_width: int
+                frame_height, frame_width = frame.shape[:2]
+                landmark_points: list[tuple[int, int]] | None = (
+                    hand_detector.detect_landmark_points(frame)
+                )
+                hand_box: HandBox | None = (
+                    HandDetector.box_from_points(
+                        landmark_points or [], frame_width, frame_height
+                    )
+                )
                 prediction: GesturePrediction | None = None
                 if hand_box is not None:
                     hand_crop: MatLike = frame[
@@ -80,7 +93,10 @@ class PredictionWorker(QThread):
                     ].copy()
                     prediction = predictor.predict(hand_crop)
                 result: PredictionResult = PredictionResult(
-                    frame=frame, prediction=prediction, hand_box=hand_box
+                    frame=frame,
+                    prediction=prediction,
+                    hand_box=hand_box,
+                    landmark_points=landmark_points,
                 )
             except Exception as error:
                 self.worker_failed.emit(

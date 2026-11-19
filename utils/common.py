@@ -24,6 +24,7 @@ MIN_AUGMENTATION_SCALE: Final[float] = 0.85
 MAX_AUGMENTATION_SCALE: Final[float] = 1.15
 MAX_AUGMENTATION_TRANSLATION_RATIO: Final[float] = 0.1
 Channels = Literal[1, 3]
+InputType = Literal["mask", "landmark"]
 SampleType = tuple[torch.Tensor, torch.Tensor]
 Transform = Callable[..., torch.Tensor]
 default_transform: Final[Transform] = transforms.Compose(

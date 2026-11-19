@@ -4,6 +4,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
+    QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -19,14 +21,23 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from studio.convert_worker import ConvertWorker
 from studio.training_worker import TrainingWorker
+from utils.common import InputType
 from utils.trainer import EpochRecord
 
 DEFAULT_DATASET_ROOT: str = "dataset"
 DEFAULT_MODEL_PATH: str = "gesture_model/gesture_model.pth"
+DEFAULT_LANDMARK_OUTPUT: str = "dataset_landmark"
 DEFAULT_EPOCH_COUNT: int = 20
+DEFAULT_LEARNING_RATE: float = 0.001
 POLL_INTERVAL_MILLISECONDS: int = 200
+SIDEBAR_WIDTH: int = 300
 TABLE_COLUMN_COUNT: int = 5
+FEATURE_TYPE_LABELS: tuple[str, ...] = (
+    "Mask CNN (skin-color mask)",
+    "Landmark MLP (MediaPipe keypoints)",
+)
 TABLE_COLUMN_TITLES: tuple[str, ...] = (
     "Epoch",
     "Train Loss",
@@ -42,6 +53,7 @@ class TrainingTab(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._worker: TrainingWorker | None = None
+        self._convert_worker: ConvertWorker | None = None
         self._displayed_epoch_count: int = 0
 
         self._poll_timer: QTimer = QTimer(self)
@@ -75,6 +87,23 @@ class TrainingTab(QWidget):
         self.epoch_spinbox.setValue(DEFAULT_EPOCH_COUNT)
         form_layout.addRow("Epoch count:", self.epoch_spinbox)
 
+        self.feature_combobox: QComboBox = QComboBox()
+        self.feature_combobox.addItems(list(FEATURE_TYPE_LABELS))
+        form_layout.addRow("Feature type:", self.feature_combobox)
+
+        self.learning_rate_spinbox: QDoubleSpinBox = QDoubleSpinBox()
+        self.learning_rate_spinbox.setDecimals(6)
+        self.learning_rate_spinbox.setRange(0.000001, 1.0)
+        self.learning_rate_spinbox.setSingleStep(0.0001)
+        self.learning_rate_spinbox.setValue(DEFAULT_LEARNING_RATE)
+        form_layout.addRow("Learning rate:", self.learning_rate_spinbox)
+
+        self.convert_button: QPushButton = QPushButton(
+            "Convert dataset to landmarks..."
+        )
+        self.convert_button.clicked.connect(self._convert_dataset)
+        form_layout.addRow("Legacy data:", self.convert_button)
+
         self.start_button: QPushButton = QPushButton("Start Training")
         self.start_button.clicked.connect(self._start_training)
 
@@ -92,6 +121,7 @@ class TrainingTab(QWidget):
         tab_layout.addWidget(self.history_table, stretch=2)
 
         sidebar_widget: QWidget = QWidget()
+        sidebar_widget.setFixedWidth(SIDEBAR_WIDTH)
         sidebar_layout: QVBoxLayout = QVBoxLayout(sidebar_widget)
         sidebar_layout.addWidget(settings_group)
         sidebar_layout.addWidget(self.start_button)
@@ -130,8 +160,18 @@ class TrainingTab(QWidget):
             return
         self._displayed_epoch_count = 0
         self.history_table.setRowCount(0)
+        input_type: InputType = (
+            "landmark"
+            if self.feature_combobox.currentIndex() == 1
+            else "mask"
+        )
         worker: TrainingWorker = TrainingWorker(
-            dataset_root, model_path, self.epoch_spinbox.value(), parent=self
+            dataset_root,
+            model_path,
+            self.epoch_spinbox.value(),
+            input_type=input_type,
+            learning_rate=self.learning_rate_spinbox.value(),
+            parent=self,
         )
         worker.dataset_loaded.connect(self._on_dataset_loaded)
         worker.training_finished.connect(self._on_training_finished)
@@ -199,6 +239,50 @@ class TrainingTab(QWidget):
         self._set_controls_enabled(True)
         self._worker = None
 
+    def _convert_dataset(self) -> None:
+        """Convert a legacy jpg dataset to landmark features in a worker."""
+        if self._convert_worker is not None:
+            return
+        input_root: str = QFileDialog.getExistingDirectory(
+            self,
+            "Select the image dataset root directory",
+            self.dataset_root_edit.text(),
+        )
+        if not input_root:
+            return
+        output_root: str = QFileDialog.getExistingDirectory(
+            self,
+            "Select the landmark output directory",
+            DEFAULT_LANDMARK_OUTPUT,
+        )
+        if not output_root:
+            return
+        worker: ConvertWorker = ConvertWorker(
+            Path(input_root), Path(output_root), parent=self
+        )
+        worker.convert_finished.connect(self._on_convert_finished)
+        worker.convert_failed.connect(self._on_convert_failed)
+        self._convert_worker = worker
+        self.convert_button.setEnabled(False)
+        self.status_label.setText("Converting dataset to landmark features...")
+        worker.start()
+
+    def _on_convert_finished(self, total_saved: int) -> None:
+        self._convert_worker = None
+        self.convert_button.setEnabled(True)
+        self.status_label.setText(
+            "Conversion finished: {} landmark vectors written.".format(total_saved)
+        )
+
+    def _on_convert_failed(self, error_message: str) -> None:
+        self._convert_worker = None
+        self.convert_button.setEnabled(True)
+        self.status_label.setText("Idle.")
+        QMessageBox.critical(self, "Conversion failed", error_message)
+
     def _set_controls_enabled(self, enabled: bool) -> None:
         self.start_button.setEnabled(enabled)
         self.epoch_spinbox.setEnabled(enabled)
+        self.feature_combobox.setEnabled(enabled)
+        self.learning_rate_spinbox.setEnabled(enabled)
+        self.convert_button.setEnabled(enabled)

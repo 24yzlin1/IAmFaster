@@ -5,8 +5,15 @@ from pathlib import Path
 import torch
 from PySide6.QtCore import QObject, QThread, Signal
 
-from utils.common import Channels, get_device
-from utils.trainer import GestureDataset, ModelTrainer, build_model
+from utils.common import Channels, InputType, get_device
+from utils.landmark import FEATURE_DIMENSIONS
+from utils.trainer import (
+    GestureDataset,
+    LandmarkDataset,
+    ModelTrainer,
+    build_landmark_model,
+    build_model,
+)
 
 DEFAULT_BATCH_SIZE: int = 32
 DEFAULT_LEARNING_RATE: float = 1e-3
@@ -33,35 +40,47 @@ class TrainingWorker(QThread):
         dataset_root: Path,
         model_path: Path,
         epoch_count: int,
+        input_type: InputType = "mask",
+        learning_rate: float = DEFAULT_LEARNING_RATE,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._dataset_root: Path = dataset_root
         self._model_path: Path = model_path
         self._epoch_count: int = epoch_count
+        self._input_type: InputType = input_type
+        self._learning_rate: float = learning_rate
         self.trainer: ModelTrainer | None = None
 
     def run(self) -> None:
         try:
             torch.manual_seed(42)  # type: ignore
-            channels: Channels = 1
             device: torch.device = get_device()
-            dataset: GestureDataset = GestureDataset(
-                self._dataset_root, channels=channels
-            )
-            model: torch.nn.Module = build_model(
-                num_classes=len(dataset.classes), in_channels=channels
-            )
+            dataset: GestureDataset | LandmarkDataset
+            model: torch.nn.Module
+            in_channels: int
+            if self._input_type == "landmark":
+                dataset = LandmarkDataset(self._dataset_root)
+                model = build_landmark_model(num_classes=len(dataset.classes))
+                in_channels = FEATURE_DIMENSIONS
+            else:
+                channels: Channels = 1
+                dataset = GestureDataset(self._dataset_root, channels=channels)
+                model = build_model(
+                    num_classes=len(dataset.classes), in_channels=channels
+                )
+                in_channels = channels
             trainer: ModelTrainer = ModelTrainer(
                 model=model,
                 dataset=dataset,
                 device=device,
                 epoch=self._epoch_count,
                 classes=dataset.classes,
-                in_channels=channels,
+                in_channels=in_channels,
                 batch_size=DEFAULT_BATCH_SIZE,
-                learning_rate=DEFAULT_LEARNING_RATE,
+                learning_rate=self._learning_rate,
                 validate_split=DEFAULT_VALIDATE_SPLIT,
+                input_type=self._input_type,
             )
             self.trainer = trainer
             self.dataset_loaded.emit(
