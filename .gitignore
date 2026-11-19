@@ -15,3 +15,6 @@ dataset
 snapshot
 assets/models/*.task
 assets/models/*.task.download
+
+# User data (profiles, run history, settings)
+data/

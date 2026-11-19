@@ -155,7 +155,7 @@ class ModelTrainer:
         classes: Sequence[str] | None = None,
         in_channels: int = 1,
         batch_size: int = 32,
-        learning_rate: float = 1e-3,
+        learning_rate: float = 2e-5,
         num_workers: int = 0,
         validate_split: float = 0.2,
         seed: int = 42,
@@ -248,8 +248,8 @@ class ModelTrainer:
             if validation_accuracy > self.best_validation_accuracy:
                 self.best_validation_accuracy = validation_accuracy
                 if snapshot_directory is not None:
-                    best_checkpoint_path: Path = snapshot_directory / "{}_best.pth".format(
-                        save_name_prefix
+                    best_checkpoint_path: Path = (
+                        snapshot_directory / "{}_best.pth".format(save_name_prefix)
                     )
                     self.save(best_checkpoint_path)
                     tqdm.write("Best checkpoint saved: {}".format(best_checkpoint_path))

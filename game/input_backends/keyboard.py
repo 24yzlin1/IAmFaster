@@ -15,8 +15,10 @@ class KeyboardInputBackend:
     """Translates pygame keyboard and mouse events into game actions."""
 
     def __init__(self, enable_game_keys: bool = True) -> None:
+        # The escape key means "go back one screen"; only closing the
+        # window produces QUIT, which ends the application.
         self._key_actions: dict[int, GameAction] = {
-            QUIT_KEY: GameAction.QUIT, RESET_KEY: GameAction.RESET,
+            QUIT_KEY: GameAction.BACK, RESET_KEY: GameAction.RESET,
         }
         if enable_game_keys:
             self._key_actions.update({

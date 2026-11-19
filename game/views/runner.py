@@ -7,6 +7,7 @@ import moderngl
 import numpy
 import pygame
 
+from game.models.environment import EnvironmentPreset
 from game.models.runner import ACTION_DURATION, LANE_WIDTH, OBSTACLE_STYLES, Hazard, Motion, Obstacle, RunnerModel
 from game.model_previewer.animation import compute_skinning_matrices, evaluate_global_node_matrices
 from game.model_previewer.gltf_loader import AnimationClipData, GltfModel, MeshData, MeshPrimitiveData, load_model
@@ -52,12 +53,13 @@ void main() { pixel = vec4(color * light, 1); }
 
 
 class RunnerView:
-    def __init__(self, context: moderngl.Context) -> None:
+    def __init__(
+        self, context: moderngl.Context, character_path: Path, environment: EnvironmentPreset,
+    ) -> None:
         self.context: moderngl.Context = context
+        self.environment: EnvironmentPreset = environment
         self.renderer: Renderer = Renderer(context, WINDOW_SIZE)
-        self.character: GltfModel = load_model(
-            ASSETS / "KayKit_Adventurers_2.0_FREE/Characters/gltf/Knight.glb"
-        )
+        self.character: GltfModel = load_model(character_path)
         self.resources: ModelRenderResources = self.renderer.upload_model(self.character, identity_matrix())
         self.obstacle_resources: dict[tuple[Hazard, int], ModelRenderResources] = {}
         obstacle_directory: Path = ASSETS / "KayKit_Platformer_Pack_1.0_FREE/Assets/gltf"
@@ -116,14 +118,14 @@ class RunnerView:
         self.box.render(moderngl.TRIANGLES, vertices=36)
 
     def render(self, model: RunnerModel) -> None:
-        self.context.clear(0.54, 0.75, 0.84, 1.0)
+        self.context.clear(*self.environment.sky, 1.0)
         self.context.disable(moderngl.CULL_FACE)
-        self._box((0, -0.15, -43), (7.2, 0.3, 100), (0.24, 0.32, 0.36))
+        self._box((0, -0.15, -43), (7.2, 0.3, 100), self.environment.ground)
         boundary: float
         for boundary in (-3.6, -1.2, 1.2, 3.6):
             marker: int
             for marker in range(-1, 17):
-                self._box((boundary, 0.01, model.distance % 5 - marker * 5), (0.06, 0.02, 2), (0.85, 0.84, 0.65))
+                self._box((boundary, 0.01, model.distance % 5 - marker * 5), (0.06, 0.02, 2), self.environment.marker)
         self.context.enable(moderngl.CULL_FACE)
         obstacle: Obstacle
         for obstacle in model.obstacles:
@@ -149,7 +151,7 @@ class RunnerView:
         self.renderer.render_model(self.resources, self.projection, compute_skinning_matrices(self.character, pose, placement))
         lines: list[str] = [f"Distance  {int(model.distance)} m"]
         if model.crashed:
-            lines.append("Run over. Press R or make a fist to restart.")
+            lines.append("Run over. Press R or make a fist to continue.")
         else:
             lines.append("Left / Right: change lane    Up: jump    Down: slide")
         self.renderer.draw_text_overlay(lines)

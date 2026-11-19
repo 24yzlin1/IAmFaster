@@ -5,12 +5,9 @@ from game.models.runner import Motion, RunnerModel
 class RunnerPresenter:
     def __init__(self) -> None:
         self.model: RunnerModel = RunnerModel()
-        self.running: bool = True
 
     def handle_action(self, action: GameAction) -> None:
-        if action is GameAction.QUIT:
-            self.running = False
-        elif action is GameAction.RESET and self.model.crashed:
+        if action is GameAction.RESET and self.model.crashed:
             self.model = RunnerModel()
         elif action is GameAction.LEFT:
             self.model.change_lane(-1)

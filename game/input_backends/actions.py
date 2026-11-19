@@ -22,6 +22,7 @@ class GameAction(Enum):
     SLIDE = auto()
     INCREMENT = auto()
     RESET = auto()
+    BACK = auto()
     QUIT = auto()
 
 
