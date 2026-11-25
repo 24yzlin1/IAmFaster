@@ -134,7 +134,6 @@ class GesturePredictor:
             )
         return input_type, in_channels, image_size
 
-    @torch.inference_mode()
     def predict(self, image: MatLike) -> GesturePrediction:
         """Classify one image and return the predicted class and probabilities.
 
@@ -163,6 +162,29 @@ class GesturePredictor:
             input_tensor = torch.from_numpy(contiguous_vector)  # type: ignore
         else:
             input_tensor = preprocess(image, self.in_channels).to(self.device)
+        return self._classify(input_tensor)
+
+    def predict_from_landmarks(
+        self, feature_vector: numpy.typing.NDArray[numpy.float32]
+    ) -> GesturePrediction:
+        """Classify an already extracted landmark feature vector.
+
+        Lets callers that detect the hand themselves reuse the detection
+        instead of making the model re-detect landmarks in a crop.
+        """
+        if self.input_type != "landmark":
+            raise RuntimeError(
+                "Model {} does not consume landmark features; its input type "
+                "is {}.".format(self.model_path, self.input_type)
+            )
+        contiguous_vector: numpy.typing.NDArray[numpy.float32] = (
+            numpy.ascontiguousarray(feature_vector, dtype=numpy.float32)
+        )
+        return self._classify(torch.from_numpy(contiguous_vector))  # type: ignore
+
+    @torch.inference_mode()
+    def _classify(self, input_tensor: torch.Tensor) -> GesturePrediction:
+        """Run the network on one unbatched input tensor."""
         batch_tensor: torch.Tensor = input_tensor.unsqueeze(0).to(self.device)
         logits: torch.Tensor = self.model(batch_tensor)
         probability_scores: torch.Tensor = torch.softmax(logits, dim=1)[0]

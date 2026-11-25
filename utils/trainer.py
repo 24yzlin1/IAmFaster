@@ -301,6 +301,11 @@ class ModelTrainer:
             self.model.parameters(), lr=learning_rate
         )
 
+    @property
+    def log_file(self) -> Path | None:
+        """Return the JSONL training log path, or None when logging is off."""
+        return self._log_file
+
     def train(
         self,
         save_dir: Path | None = None,

@@ -45,6 +45,18 @@ class HandBox(NamedTuple):
     size: int
 
 
+class HandDetection(NamedTuple):
+    """One detection of the first hand.
+
+    *landmark_points* are the 21 landmark pixel coordinates on the input
+    frame, used for drawing. *feature_vector* is the normalized vector
+    consumed by landmark models, computed from the same detection.
+    """
+
+    landmark_points: list[tuple[int, int]]
+    feature_vector: numpy.typing.NDArray[numpy.float32]
+
+
 def ensure_model_file() -> Path:
     """Return the local hand-landmarker model, downloading it if missing."""
     model_path: Path = MODEL_DIRECTORY / MODEL_FILE_NAME
@@ -107,6 +119,38 @@ class HandDetector:
         if padded_hands:
             return padded_hands[0], padded_frame, offset_x, offset_y
         return None
+
+    def detect_hand(self, frame: MatLike) -> HandDetection | None:
+        """Detect the first hand once and return both of its representations.
+
+        Avoids running the landmarker twice when a caller needs the drawn
+        skeleton and the normalized feature vector at the same time.
+        Returns None when no hand is detected or the landmarks are
+        degenerate (palm scale near zero).
+        """
+        detected = self._detect_landmarks(frame)
+        if detected is None:
+            return None
+        landmarks, reference_frame, offset_x, offset_y = detected
+        try:
+            feature_vector: numpy.typing.NDArray[numpy.float32] = (
+                landmarks_to_vector(landmarks)
+            )
+        except ValueError:
+            return None
+        reference_height: int
+        reference_width: int
+        reference_height, reference_width = reference_frame.shape[:2]
+        landmark_points: list[tuple[int, int]] = [
+            (
+                int(landmark.x * reference_width) - offset_x,
+                int(landmark.y * reference_height) - offset_y,
+            )
+            for landmark in landmarks
+        ]
+        return HandDetection(
+            landmark_points=landmark_points, feature_vector=feature_vector
+        )
 
     def detect_landmark_vector(self, frame: MatLike) -> numpy.typing.NDArray[numpy.float32] | None:
         """Return the normalized landmark feature vector for *frame*.

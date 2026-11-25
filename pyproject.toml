@@ -1,10 +1,12 @@
 [project]
 name = "i-am-faster"
 version = "0.1.0"
-description = "Add your description here"
+description = "Gesture-controlled endless runner with a dual-route recognition pipeline and a training toolkit"
+license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "matplotlib>=3.10.0",
     "mediapipe>=1.2.3",
     "moderngl>=5.12.0",
     "numpy>=2.5.4",

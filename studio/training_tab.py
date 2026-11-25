@@ -1,5 +1,6 @@
 """Training tab: configure and run gesture model training from the GUI."""
 
+import json
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 from studio.convert_worker import ConvertWorker
 from studio.training_worker import TrainingWorker
 from utils.common import InputType
+from utils.plot_training_log import render_training_log_chart
 from utils.trainer import EpochRecord
 
 DEFAULT_DATASET_ROOT: str = "dataset"
@@ -103,6 +105,12 @@ class TrainingTab(QWidget):
         )
         self.convert_button.clicked.connect(self._convert_dataset)
         form_layout.addRow("Legacy data:", self.convert_button)
+
+        self.export_curve_button: QPushButton = QPushButton(
+            "Export training curve..."
+        )
+        self.export_curve_button.clicked.connect(self._export_training_curve)
+        form_layout.addRow("Chart:", self.export_curve_button)
 
         self.start_button: QPushButton = QPushButton("Start Training")
         self.start_button.clicked.connect(self._start_training)
@@ -266,6 +274,38 @@ class TrainingTab(QWidget):
         self.convert_button.setEnabled(False)
         self.status_label.setText("Converting dataset to landmark features...")
         worker.start()
+
+    def _export_training_curve(self) -> None:
+        """Render a JSONL training log into a PNG chart via pyplot."""
+        log_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select the training log file",
+            "snapshot",
+            "Training logs (*_training_log.jsonl)",
+        )
+        if not log_path:
+            return
+        default_output: str = "{}.png".format(
+            Path(log_path).stem.replace("_training_log", "_curve")
+        )
+        output_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Select the chart output path",
+            str(Path(log_path).parent / default_output),
+            "PNG images (*.png)",
+        )
+        if not output_path:
+            return
+        try:
+            saved_path: Path = render_training_log_chart(
+                Path(log_path), Path(output_path)
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            QMessageBox.critical(self, "Export failed", str(error))
+            return
+        self.status_label.setText(
+            "Training curve chart saved: {}".format(saved_path)
+        )
 
     def _on_convert_finished(self, total_saved: int) -> None:
         self._convert_worker = None
