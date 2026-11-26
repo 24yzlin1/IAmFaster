@@ -17,7 +17,7 @@ from game.input_backends.camera import CameraFrameReader, create_camera_frame_re
 from utils.landmark import HandNotDetectedError
 from utils.predictor import GesturePrediction, GesturePredictor
 
-DEFAULT_CONFIDENCE_THRESHOLD: Final[float] = 0.8
+DEFAULT_CONFIDENCE_THRESHOLD: Final[float] = 0.25
 DEFAULT_STABLE_PREDICTION_COUNT: Final[int] = 3
 DEFAULT_WORKER_INTERVAL_SECONDS: Final[float] = 0.005
 DEFAULT_REPEAT_INTERVAL_SECONDS: Final[float] = 0.25
@@ -65,9 +65,13 @@ class GestureInputSource:
         self._stable_prediction_count = stable_prediction_count
         self._repeat_interval_seconds = repeat_interval_seconds
         self._predictor = GesturePredictor(model_file_path)
-        missing: list[str] = sorted(required_class_names.difference(self._predictor.classes))
+        missing: list[str] = sorted(
+            required_class_names.difference(self._predictor.classes)
+        )
         if missing:
-            raise ValueError(f"gesture model is missing required classes: {', '.join(missing)}")
+            raise ValueError(
+                f"gesture model is missing required classes: {', '.join(missing)}"
+            )
         self._release_count: int = 0
         self._camera_reader: CameraFrameReader = create_camera_frame_reader(camera_name)
         self._state_lock = threading.Lock()
@@ -149,9 +153,7 @@ class GestureInputSource:
                 confidence=self._latest_confidence,
             )
         if confirmed_class_name in self._repeatable_class_names:
-            elapsed_seconds = (
-                current_monotonic_time - self._last_emit_monotonic_time
-            )
+            elapsed_seconds = current_monotonic_time - self._last_emit_monotonic_time
             if elapsed_seconds >= self._repeat_interval_seconds:
                 self._last_emit_monotonic_time = current_monotonic_time
                 return GestureEvent(
